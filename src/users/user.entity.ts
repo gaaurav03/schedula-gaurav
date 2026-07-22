@@ -4,7 +4,10 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  OneToOne,
 } from 'typeorm';
+import { DoctorProfile } from '../doctor/entities/doctor-profile.entity';
+import { PatientProfile } from '../patient/entities/patient-profile.entity';
 
 export enum Role {
   DOCTOR = 'DOCTOR',
@@ -30,6 +33,14 @@ export class User {
     enum: Role,
   })
   role: Role;
+
+  /** Inverse side of the OneToOne relation with DoctorProfile */
+  @OneToOne(() => DoctorProfile, (doctorProfile) => doctorProfile.user)
+  doctorProfile: DoctorProfile;
+
+  /** Inverse side of the OneToOne relation with PatientProfile */
+  @OneToOne(() => PatientProfile, (patientProfile) => patientProfile.user)
+  patientProfile: PatientProfile;
 
   @CreateDateColumn()
   createdAt: Date;
