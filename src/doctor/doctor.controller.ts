@@ -1,33 +1,65 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Role } from '../users/user.entity';
+import { DoctorService } from './doctor.service';
+import { CreateDoctorProfileDto } from './dto/create-doctor-profile.dto';
+import { UpdateDoctorProfileDto } from './dto/update-doctor-profile.dto';
 
 @Controller('doctor')
 @UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.DOCTOR)
 export class DoctorController {
+  constructor(private readonly doctorService: DoctorService) {}
+
+  /**
+   * POST /doctor/profile
+   * Create the doctor's onboarding profile.
+   * ✅ DOCTOR only  |  ❌ PATIENT → 403  |  ❌ No token → 401
+   * ❌ Duplicate → 409 Conflict
+   */
+  @Post('profile')
+  @HttpCode(HttpStatus.CREATED)
+  createProfile(
+    @GetUser() user: { id: string; role: Role },
+    @Body() dto: CreateDoctorProfileDto,
+  ) {
+    return this.doctorService.create(user.id, dto);
+  }
+
   /**
    * GET /doctor/profile
-   * Protected route – only accessible by users with role DOCTOR.
-   *
-   * ✅ Doctor can access
-   * ❌ Patient receives 403 Forbidden
-   * ❌ Unauthenticated request receives 401 Unauthorized
+   * Retrieve the authenticated doctor's profile.
+   * ✅ DOCTOR only  |  ❌ PATIENT → 403  |  ❌ No token → 401
+   * ❌ Profile not created yet → 404 Not Found
    */
   @Get('profile')
-  @Roles(Role.DOCTOR)
-  getProfile(@GetUser() user: { id: string; name: string; email: string; role: Role }) {
-    return {
-      message: 'Welcome to the Doctor portal!',
-      profile: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        portalAccess: 'Doctor Dashboard – manage appointments, prescriptions, and patient records.',
-      },
-    };
+  getProfile(@GetUser() user: { id: string; role: Role }) {
+    return this.doctorService.findByUserId(user.id);
+  }
+
+  /**
+   * PATCH /doctor/profile
+   * Partially update the authenticated doctor's profile.
+   * ✅ DOCTOR only  |  ❌ PATIENT → 403  |  ❌ No token → 401
+   * ❌ Profile not created yet → 404 Not Found
+   */
+  @Patch('profile')
+  updateProfile(
+    @GetUser() user: { id: string; role: Role },
+    @Body() dto: UpdateDoctorProfileDto,
+  ) {
+    return this.doctorService.update(user.id, dto);
   }
 }
