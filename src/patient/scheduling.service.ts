@@ -5,22 +5,26 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { StreamSlot } from '../doctor/entities/stream-slot.entity';
+import { StreamSchedule } from '../doctor/entities/stream-schedule.entity';
+import { StreamBooking } from '../doctor/entities/stream-slot.entity';
 import { WaveSchedule } from '../doctor/entities/wave-schedule.entity';
-import { WaveBooking } from '../doctor/entities/wave-booking.entity';
+import { WaveSlot } from '../doctor/entities/wave-booking.entity';
 import { PatientProfile } from './entities/patient-profile.entity';
 
 @Injectable()
 export class PatientSchedulingService {
   constructor(
-    @InjectRepository(StreamSlot)
-    private readonly streamSlotRepo: Repository<StreamSlot>,
+    @InjectRepository(StreamSchedule)
+    private readonly streamScheduleRepo: Repository<StreamSchedule>,
+
+    @InjectRepository(StreamBooking)
+    private readonly streamBookingRepo: Repository<StreamBooking>,
 
     @InjectRepository(WaveSchedule)
     private readonly waveScheduleRepo: Repository<WaveSchedule>,
 
-    @InjectRepository(WaveBooking)
-    private readonly waveBookingRepo: Repository<WaveBooking>,
+    @InjectRepository(WaveSlot)
+    private readonly waveSlotRepo: Repository<WaveSlot>,
 
     @InjectRepository(PatientProfile)
     private readonly patientProfileRepo: Repository<PatientProfile>,
@@ -38,52 +42,134 @@ export class PatientSchedulingService {
     return profile;
   }
 
-  // ─── Stream: Patient View ─────────────────────────────────────────────────
+  // ─── STREAM: Token-Based Patient Booking ─────────────────────────────────
 
   /**
    * GET /patient/schedule/stream?doctorId=&date=
-   * View all available (unbooked) stream slots for a doctor on a date.
+   * View STREAM sessions for a doctor on a date.
+   * Shows capacity and whether this is a RECURRING or CUSTOM schedule.
    */
-  async getAvailableStreamSlots(
+  async getStreamSchedules(
     doctorId: string,
     date: string,
-  ): Promise<{
-    type: 'STREAM';
-    doctorId: string;
-    date: string;
-    availableSlots: StreamSlot[];
-  }> {
-    const slots = await this.streamSlotRepo.find({
-      where: { doctorId, date, isBooked: false },
-      order: { slotStart: 'ASC' },
+  ) {
+    const streams = await this.streamScheduleRepo.find({
+      where: { doctorId, date },
+      order: { startTime: 'ASC' },
     });
 
     return {
       type: 'STREAM',
       doctorId,
       date,
-      availableSlots: slots,
+      sessions: streams.map((s) => ({
+        id: s.id,
+        timeWindow: `${s.startTime} – ${s.endTime}`,
+        schedulingType: s.schedulingType,
+        tokensAvailable: s.maxPatients - s.currentCount,
+        totalCapacity: s.maxPatients,
+        isFull: s.currentCount >= s.maxPatients,
+      })),
     };
   }
 
   /**
-   * POST /patient/schedule/stream/:slotId/book
-   * Book a specific stream slot → returns exact appointment time.
+   * POST /patient/schedule/stream/:streamId/book
+   * Book into a STREAM session → receive sequential token number.
+   * Response includes schedulingType (RECURRING or CUSTOM).
    */
-  async bookStreamSlot(
-    userId: string,
-    slotId: string,
-  ): Promise<{
-    message: string;
-    appointmentType: 'STREAM';
-    appointmentTime: string;
-    date: string;
-  }> {
+  async bookStream(userId: string, streamId: string) {
     const patient = await this.getPatientProfile(userId);
 
-    const slot = await this.streamSlotRepo.findOne({ where: { id: slotId } });
+    const stream = await this.streamScheduleRepo.findOne({ where: { id: streamId } });
+    if (!stream) {
+      throw new NotFoundException(`Stream session ${streamId} not found.`);
+    }
+
+    // Check capacity
+    if (stream.currentCount >= stream.maxPatients) {
+      throw new ConflictException(
+        `Stream session is full (${stream.maxPatients}/${stream.maxPatients} tokens issued). No more bookings.`,
+      );
+    }
+
+    // Check duplicate booking
+    const existing = await this.streamBookingRepo.findOne({
+      where: { streamId, patientId: patient.id },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `You have already booked this session. Your token number is #${existing.tokenNumber}.`,
+      );
+    }
+
+    // Assign next token number
+    const tokenNumber = stream.currentCount + 1;
+
+    const booking = this.streamBookingRepo.create({
+      streamId,
+      patientId: patient.id,
+      tokenNumber,
+      bookedAt: new Date(),
+    });
+    await this.streamBookingRepo.save(booking);
+
+    // Increment counter
+    stream.currentCount += 1;
+    await this.streamScheduleRepo.save(stream);
+
+    return {
+      message: 'Stream booking confirmed! Please arrive within the time window.',
+      appointmentType: 'STREAM',
+      schedulingType: stream.schedulingType,
+      timeWindow: `${stream.startTime} – ${stream.endTime}`,
+      date: stream.date,
+      tokenNumber,
+      tokensRemaining: `${stream.maxPatients - stream.currentCount}/${stream.maxPatients} remaining`,
+    };
+  }
+
+  // ─── WAVE: Exact Slot Patient Booking ────────────────────────────────────
+
+  /**
+   * GET /patient/schedule/wave?doctorId=&date=
+   * View available exact time slots for a doctor on a date.
+   * Each slot shows its schedulingType (RECURRING or CUSTOM).
+   */
+  async getAvailableWaveSlots(doctorId: string, date: string) {
+    const slots = await this.waveSlotRepo.find({
+      where: { doctorId, date, isBooked: false },
+      order: { slotStart: 'ASC' },
+      relations: ['wave'],
+    });
+
+    return {
+      type: 'WAVE',
+      doctorId,
+      date,
+      availableSlots: slots.map((slot) => ({
+        id: slot.id,
+        slotTime: `${slot.slotStart} – ${slot.slotEnd}`,
+        schedulingType: slot.wave?.schedulingType ?? null,
+        isBooked: slot.isBooked,
+      })),
+    };
+  }
+
+  /**
+   * POST /patient/schedule/wave/:slotId/book
+   * Book an exact WAVE slot → receive confirmed appointment time.
+   * Response includes schedulingType (RECURRING or CUSTOM).
+   */
+  async bookWaveSlot(userId: string, slotId: string) {
+    const patient = await this.getPatientProfile(userId);
+
+    const slot = await this.waveSlotRepo.findOne({
+      where: { id: slotId },
+      relations: ['wave'],
+    });
     if (!slot) {
-      throw new NotFoundException(`Stream slot ${slotId} not found.`);
+      throw new NotFoundException(`Wave slot ${slotId} not found.`);
     }
 
     if (slot.isBooked) {
@@ -92,13 +178,13 @@ export class PatientSchedulingService {
       );
     }
 
-    // Check if this patient already booked a slot in the same schedule
-    const alreadyBooked = await this.streamSlotRepo.findOne({
-      where: { scheduleId: slot.scheduleId, patientId: patient.id },
+    // Check if patient already booked another slot in the same wave schedule
+    const alreadyBooked = await this.waveSlotRepo.findOne({
+      where: { waveId: slot.waveId, patientId: patient.id },
     });
     if (alreadyBooked) {
       throw new ConflictException(
-        `You already have a booking in this schedule: ${alreadyBooked.slotStart}–${alreadyBooked.slotEnd}.`,
+        `You already have a booking in this schedule at ${alreadyBooked.slotStart}–${alreadyBooked.slotEnd}.`,
       );
     }
 
@@ -106,116 +192,14 @@ export class PatientSchedulingService {
     slot.isBooked = true;
     slot.patientId = patient.id;
     slot.bookedAt = new Date();
-    await this.streamSlotRepo.save(slot);
+    await this.waveSlotRepo.save(slot);
 
     return {
-      message: 'Appointment booked successfully!',
-      appointmentType: 'STREAM',
+      message: 'Appointment confirmed! You have an exact appointment time.',
+      appointmentType: 'WAVE',
+      schedulingType: slot.wave?.schedulingType ?? null,
       appointmentTime: `${slot.slotStart} – ${slot.slotEnd}`,
       date: slot.date,
-    };
-  }
-
-  // ─── Wave: Patient View ───────────────────────────────────────────────────
-
-  /**
-   * GET /patient/schedule/wave?doctorId=&date=
-   * View wave schedules for a doctor on a specific date.
-   */
-  async getWaveSchedules(
-    doctorId: string,
-    date: string,
-  ): Promise<{
-    type: 'WAVE';
-    doctorId: string;
-    date: string;
-    waves: {
-      id: string;
-      timeWindow: string;
-      available: string;
-      isFull: boolean;
-    }[];
-  }> {
-    const waves = await this.waveScheduleRepo.find({
-      where: { doctorId, date },
-      order: { startTime: 'ASC' },
-    });
-
-    return {
-      type: 'WAVE',
-      doctorId,
-      date,
-      waves: waves.map((w) => ({
-        id: w.id,
-        timeWindow: `${w.startTime} – ${w.endTime}`,
-        available: `${w.maxPatients - w.currentCount}/${w.maxPatients}`,
-        isFull: w.currentCount >= w.maxPatients,
-      })),
-    };
-  }
-
-  /**
-   * POST /patient/schedule/wave/:waveId/book
-   * Book into a wave → assigned token number in order of booking.
-   */
-  async bookWaveSlot(
-    userId: string,
-    waveId: string,
-  ): Promise<{
-    message: string;
-    appointmentType: 'WAVE';
-    timeWindow: string;
-    date: string;
-    tokenNumber: number;
-    availability: string;
-  }> {
-    const patient = await this.getPatientProfile(userId);
-
-    const wave = await this.waveScheduleRepo.findOne({ where: { id: waveId } });
-    if (!wave) {
-      throw new NotFoundException(`Wave schedule ${waveId} not found.`);
-    }
-
-    // Check capacity
-    if (wave.currentCount >= wave.maxPatients) {
-      throw new ConflictException(
-        `Wave is full (${wave.maxPatients}/${wave.maxPatients}). No more bookings accepted.`,
-      );
-    }
-
-    // Check duplicate booking
-    const existingBooking = await this.waveBookingRepo.findOne({
-      where: { waveId, patientId: patient.id },
-    });
-    if (existingBooking) {
-      throw new ConflictException(
-        `You have already booked this wave. Your token number is ${existingBooking.tokenNumber}.`,
-      );
-    }
-
-    // Assign token number (next in sequence)
-    const tokenNumber = wave.currentCount + 1;
-
-    // Save booking
-    const booking = this.waveBookingRepo.create({
-      waveId,
-      patientId: patient.id,
-      tokenNumber,
-      bookedAt: new Date(),
-    });
-    await this.waveBookingRepo.save(booking);
-
-    // Increment wave counter
-    wave.currentCount += 1;
-    await this.waveScheduleRepo.save(wave);
-
-    return {
-      message: 'Wave booking confirmed!',
-      appointmentType: 'WAVE',
-      timeWindow: `${wave.startTime} – ${wave.endTime}`,
-      date: wave.date,
-      tokenNumber,
-      availability: `${wave.maxPatients - wave.currentCount}/${wave.maxPatients} remaining`,
     };
   }
 }

@@ -24,55 +24,56 @@ export class PatientSchedulingController {
 
   /**
    * GET /patient/schedule/stream?doctorId=&date=YYYY-MM-DD
-   * View available (unbooked) stream slots for a doctor on a specific date.
+   * View STREAM sessions for a doctor on a date.
+   * Response includes schedulingType (RECURRING | CUSTOM) and token availability.
    * ✅ PATIENT only | ❌ DOCTOR → 403
    */
   @Get('stream')
-  getAvailableStreamSlots(
+  getStreamSchedules(
     @Query('doctorId') doctorId: string,
     @Query('date') date: string,
   ) {
-    return this.patientSchedulingService.getAvailableStreamSlots(doctorId, date);
+    return this.patientSchedulingService.getStreamSchedules(doctorId, date);
   }
 
   /**
-   * POST /patient/schedule/stream/:slotId/book
-   * Book an exact stream slot → returns confirmed appointment time.
-   * ❌ Already booked → 409 | ❌ Slot not found → 404
+   * POST /patient/schedule/stream/:streamId/book
+   * Book into a STREAM session → receive a sequential token number.
+   * ❌ Session full → 409 | ❌ Duplicate booking → 409 | ❌ Not found → 404
    */
-  @Post('stream/:slotId/book')
+  @Post('stream/:streamId/book')
   @HttpCode(HttpStatus.CREATED)
-  bookStreamSlot(
+  bookStream(
     @GetUser() user: { id: string },
-    @Param('slotId', ParseUUIDPipe) slotId: string,
+    @Param('streamId', ParseUUIDPipe) streamId: string,
   ) {
-    return this.patientSchedulingService.bookStreamSlot(user.id, slotId);
+    return this.patientSchedulingService.bookStream(user.id, streamId);
   }
 
   /**
    * GET /patient/schedule/wave?doctorId=&date=YYYY-MM-DD
-   * View wave schedules for a doctor on a specific date.
-   * Shows availability: "3/5" slots remaining.
+   * View available exact time slots (Wave slots) for a doctor on a date.
+   * Response includes schedulingType (RECURRING | CUSTOM) per slot.
    */
   @Get('wave')
-  getWaveSchedules(
+  getAvailableWaveSlots(
     @Query('doctorId') doctorId: string,
     @Query('date') date: string,
   ) {
-    return this.patientSchedulingService.getWaveSchedules(doctorId, date);
+    return this.patientSchedulingService.getAvailableWaveSlots(doctorId, date);
   }
 
   /**
-   * POST /patient/schedule/wave/:waveId/book
-   * Book into a wave → receive assigned token number.
-   * ❌ Wave full → 409 | ❌ Duplicate booking → 409 | ❌ Not found → 404
+   * POST /patient/schedule/wave/:slotId/book
+   * Book an exact Wave time slot → receive confirmed appointment time.
+   * ❌ Slot taken → 409 | ❌ Duplicate booking → 409 | ❌ Not found → 404
    */
-  @Post('wave/:waveId/book')
+  @Post('wave/:slotId/book')
   @HttpCode(HttpStatus.CREATED)
   bookWaveSlot(
     @GetUser() user: { id: string },
-    @Param('waveId', ParseUUIDPipe) waveId: string,
+    @Param('slotId', ParseUUIDPipe) slotId: string,
   ) {
-    return this.patientSchedulingService.bookWaveSlot(user.id, waveId);
+    return this.patientSchedulingService.bookWaveSlot(user.id, slotId);
   }
 }

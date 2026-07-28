@@ -9,17 +9,20 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { DoctorProfile } from './doctor-profile.entity';
-import { WaveBooking } from './wave-booking.entity';
+import { WaveSlot } from './wave-booking.entity';
+import { SchedulingType } from './stream-schedule.entity';
 
+/**
+ * WAVE SCHEDULING: Exact time-slot model.
+ * Doctor sets a time window + slot duration + optional buffer.
+ * Server auto-generates individual bookable slots.
+ * Ideal for: Psychologists, Dermatologists, Specialists.
+ */
 @Entity('wave_schedules')
 export class WaveSchedule {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /**
-   * ManyToOne: one doctor can have many wave schedules.
-   * CASCADE DELETE removes wave schedules when doctor profile is deleted.
-   */
   @ManyToOne(() => DoctorProfile, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'doctorId' })
   doctor: DoctorProfile;
@@ -27,29 +30,35 @@ export class WaveSchedule {
   @Column({ type: 'uuid' })
   doctorId: string;
 
-  /** Specific date for this wave: "YYYY-MM-DD" */
+  /** Specific date for this schedule: "YYYY-MM-DD" */
   @Column({ type: 'date' })
   date: string;
 
-  /** Wave window start: "HH:mm" */
+  /** Session window start: "HH:mm" */
   @Column({ type: 'varchar', length: 5 })
   startTime: string;
 
-  /** Wave window end: "HH:mm" */
+  /** Session window end: "HH:mm" */
   @Column({ type: 'varchar', length: 5 })
   endTime: string;
 
-  /** Maximum patients allowed in this wave */
+  /** Duration of each individual appointment slot in minutes (e.g. 15) */
   @Column({ type: 'int' })
-  maxPatients: number;
+  slotDurationMins: number;
 
-  /** Current number of bookings (incremented on each successful booking) */
+  /** Optional gap/buffer between slots in minutes (default: 0) */
   @Column({ type: 'int', default: 0 })
-  currentCount: number;
+  bufferTimeMins: number;
 
-  /** Bookings linked to this wave */
-  @OneToMany(() => WaveBooking, (booking) => booking.wave, { cascade: true })
-  bookings: WaveBooking[];
+  /**
+   * Whether this schedule is based on the doctor's RECURRING weekly template
+   * or a CUSTOM date-specific override.
+   */
+  @Column({ type: 'enum', enum: SchedulingType })
+  schedulingType: SchedulingType;
+
+  @OneToMany(() => WaveSlot, (slot) => slot.wave, { cascade: true })
+  slots: WaveSlot[];
 
   @CreateDateColumn()
   createdAt: Date;

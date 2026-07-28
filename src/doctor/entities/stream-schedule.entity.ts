@@ -9,17 +9,24 @@ import {
   OneToMany,
 } from 'typeorm';
 import { DoctorProfile } from './doctor-profile.entity';
-import { StreamSlot } from './stream-slot.entity';
+import { StreamBooking } from './stream-slot.entity';
 
+export enum SchedulingType {
+  RECURRING = 'RECURRING',
+  CUSTOM = 'CUSTOM',
+}
+
+/**
+ * STREAM SCHEDULING: Token-based appointment model.
+ * Doctor sets a time window + max patient capacity.
+ * Patients queue up and receive sequential token numbers.
+ * Ideal for: General Physicians, OPD Clinics, high-volume hospitals.
+ */
 @Entity('stream_schedules')
 export class StreamSchedule {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /**
-   * ManyToOne: one doctor can have many stream schedules.
-   * CASCADE DELETE removes schedules when doctor profile is deleted.
-   */
   @ManyToOne(() => DoctorProfile, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'doctorId' })
   doctor: DoctorProfile;
@@ -31,25 +38,31 @@ export class StreamSchedule {
   @Column({ type: 'date' })
   date: string;
 
-  /** 24-hour "HH:mm" format */
+  /** Session window start: "HH:mm" */
   @Column({ type: 'varchar', length: 5 })
   startTime: string;
 
-  /** 24-hour "HH:mm" format */
+  /** Session window end: "HH:mm" */
   @Column({ type: 'varchar', length: 5 })
   endTime: string;
 
-  /** Duration of each slot in minutes (e.g. 15) */
+  /** Maximum number of tokens (patients) allowed in this stream session */
   @Column({ type: 'int' })
-  slotDurationMins: number;
+  maxPatients: number;
 
-  /** Optional gap between slots in minutes (e.g. 5) — defaults to 0 */
+  /** How many patients have booked so far (incremented on each booking) */
   @Column({ type: 'int', default: 0 })
-  bufferTimeMins: number;
+  currentCount: number;
 
-  /** Auto-generated slots linked to this schedule */
-  @OneToMany(() => StreamSlot, (slot) => slot.schedule, { cascade: true })
-  slots: StreamSlot[];
+  /**
+   * Whether this schedule is based on the doctor's RECURRING weekly template
+   * or a CUSTOM date-specific override.
+   */
+  @Column({ type: 'enum', enum: SchedulingType })
+  schedulingType: SchedulingType;
+
+  @OneToMany(() => StreamBooking, (booking) => booking.stream, { cascade: true })
+  bookings: StreamBooking[];
 
   @CreateDateColumn()
   createdAt: Date;

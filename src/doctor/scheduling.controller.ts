@@ -26,8 +26,9 @@ export class SchedulingController {
 
   /**
    * POST /doctor/schedule/stream
-   * Create a stream schedule → server auto-generates all time slots.
-   * ✅ DOCTOR only | ❌ Invalid config → 400 | ❌ No profile → 404
+   * Create a STREAM session (token-based).
+   * Doctor sets: time window + maxPatients + schedulingType (RECURRING | CUSTOM)
+   * ✅ DOCTOR only | ❌ Invalid time range → 400 | ❌ No profile → 404
    */
   @Post('stream')
   @HttpCode(HttpStatus.CREATED)
@@ -40,7 +41,7 @@ export class SchedulingController {
 
   /**
    * GET /doctor/schedule/stream
-   * List all stream schedules with their generated slots.
+   * List all STREAM sessions with current token booking counts.
    */
   @Get('stream')
   findAllStreamSchedules(@GetUser() user: { id: string }) {
@@ -48,21 +49,23 @@ export class SchedulingController {
   }
 
   /**
-   * GET /doctor/schedule/stream/:id/slots
-   * View all generated slots for a specific schedule.
+   * GET /doctor/schedule/stream/:id/bookings
+   * View all token bookings for a specific STREAM session.
    */
-  @Get('stream/:id/slots')
-  getStreamSlots(
+  @Get('stream/:id/bookings')
+  getStreamBookings(
     @GetUser() user: { id: string },
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.schedulingService.getStreamSlots(user.id, id);
+    return this.schedulingService.getStreamBookings(user.id, id);
   }
 
   /**
    * POST /doctor/schedule/wave
-   * Create a wave schedule with a time window and max patient capacity.
-   * ✅ DOCTOR only | ❌ Invalid time range → 400
+   * Create a WAVE schedule (exact slot-based).
+   * Doctor sets: time window + slotDurationMins + bufferTimeMins? + schedulingType (RECURRING | CUSTOM)
+   * Server auto-generates all individual time slots.
+   * ✅ DOCTOR only | ❌ Invalid config → 400
    */
   @Post('wave')
   @HttpCode(HttpStatus.CREATED)
@@ -75,10 +78,22 @@ export class SchedulingController {
 
   /**
    * GET /doctor/schedule/wave
-   * List all wave schedules with booking counts.
+   * List all WAVE schedules with auto-generated slots.
    */
   @Get('wave')
   findAllWaveSchedules(@GetUser() user: { id: string }) {
     return this.schedulingService.findAllWaveSchedules(user.id);
+  }
+
+  /**
+   * GET /doctor/schedule/wave/:id/slots
+   * View all auto-generated slots for a specific WAVE schedule.
+   */
+  @Get('wave/:id/slots')
+  getWaveSlots(
+    @GetUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.schedulingService.getWaveSlots(user.id, id);
   }
 }
