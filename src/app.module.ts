@@ -28,8 +28,8 @@ import { PatientModule } from './patient/patient.module';
         password: config.get<string>('DB_PASSWORD', ''),
         database: config.get<string>('DB_NAME', 'medical_appointment_db'),
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: config.get<boolean>('DB_SYNCHRONIZE', false),
-        logging: config.get<boolean>('DB_LOGGING', false),
+        synchronize: config.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
+        logging: config.get<string>('DB_LOGGING', 'false') === 'true',
         autoLoadEntities: true,
         // Enable SSL for cloud-hosted PostgreSQL (Neon)
         ssl: config.get<string>('DB_SSL', 'false') === 'true'

@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { DoctorProfile } from './doctor-profile.entity';
+import { SchedulingMode } from './recurring-availability.entity';
 
 @Entity('custom_availability')
 export class CustomAvailability {
@@ -43,6 +44,26 @@ export class CustomAvailability {
    */
   @Column({ type: 'boolean', default: true })
   isAvailable: boolean;
+
+  /**
+   * How appointments are scheduled within this time window:
+   * STREAM = token-based queue | WAVE = exact time slots
+   * Ignored when isAvailable = false.
+   */
+  @Column({ type: 'enum', enum: SchedulingMode, nullable: true })
+  schedulingMode: SchedulingMode | null;
+
+  /** STREAM only: maximum number of tokens per session */
+  @Column({ type: 'int', nullable: true })
+  maxPatients: number | null;
+
+  /** WAVE only: duration of each generated slot in minutes */
+  @Column({ type: 'int', nullable: true })
+  slotDurationMins: number | null;
+
+  /** WAVE only: buffer/gap between slots in minutes (default 0) */
+  @Column({ type: 'int', nullable: true, default: 0 })
+  bufferTimeMins: number | null;
 
   @CreateDateColumn()
   createdAt: Date;

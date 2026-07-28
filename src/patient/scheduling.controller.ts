@@ -23,10 +23,30 @@ export class PatientSchedulingController {
   constructor(private readonly patientSchedulingService: PatientSchedulingService) {}
 
   /**
+   * GET /patient/schedule/available?doctorId=&date=YYYY-MM-DD
+   *
+   * 🌟 SMART ENDPOINT — Resolves and returns all bookable sessions for a doctor on a date.
+   * Priority: Custom override > Recurring fallback
+   *
+   * - If custom override exists and isAvailable=false → { available: false }
+   * - If custom override exists and isAvailable=true  → serves that session (STREAM or WAVE)
+   * - If no custom override                           → falls back to recurring for that weekday
+   * - If no recurring either                          → { available: false }
+   *
+   * Sessions are auto-created on first query (lazy creation).
+   * ✅ PATIENT only
+   */
+  @Get('available')
+  getAvailableSchedule(
+    @Query('doctorId') doctorId: string,
+    @Query('date') date: string,
+  ) {
+    return this.patientSchedulingService.getAvailableSchedule(doctorId, date);
+  }
+
+  /**
    * GET /patient/schedule/stream?doctorId=&date=YYYY-MM-DD
-   * View STREAM sessions for a doctor on a date.
-   * Response includes schedulingType (RECURRING | CUSTOM) and token availability.
-   * ✅ PATIENT only | ❌ DOCTOR → 403
+   * View existing STREAM sessions for a doctor on a date (token availability).
    */
   @Get('stream')
   getStreamSchedules(
@@ -53,7 +73,6 @@ export class PatientSchedulingController {
   /**
    * GET /patient/schedule/wave?doctorId=&date=YYYY-MM-DD
    * View available exact time slots (Wave slots) for a doctor on a date.
-   * Response includes schedulingType (RECURRING | CUSTOM) per slot.
    */
   @Get('wave')
   getAvailableWaveSlots(
