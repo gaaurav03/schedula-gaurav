@@ -29,4 +29,4 @@ import { AuthModule } from '../auth/auth.module';
   controllers: [PatientController, PatientSchedulingController],
   providers: [PatientService, PatientSchedulingService],
 })
-export class PatientModule {}
+export class PatientModule { }
