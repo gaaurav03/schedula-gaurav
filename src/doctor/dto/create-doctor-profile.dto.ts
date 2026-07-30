@@ -3,7 +3,6 @@ import {
   IsNotEmpty,
   IsInt,
   IsPositive,
-  IsNumber,
   IsOptional,
   Min,
   Max,
@@ -31,15 +30,6 @@ export class CreateDoctorProfileDto {
   @IsString()
   @MaxLength(200)
   qualification: string;
-
-  @IsNumber({}, { message: 'Consultation fee must be a number' })
-  @IsPositive({ message: 'Consultation fee must be positive' })
-  consultationFee: number;
-
-  @IsNotEmpty({ message: 'Availability hours are required' })
-  @IsString()
-  @MaxLength(200)
-  availabilityHours: string;
 
   @IsOptional()
   @IsString()

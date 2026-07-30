@@ -19,6 +19,11 @@ export enum DayOfWeek {
   SUNDAY = 'SUNDAY',
 }
 
+export enum SchedulingMode {
+  STREAM = 'STREAM',
+  WAVE = 'WAVE',
+}
+
 @Entity('recurring_availability')
 export class RecurringAvailability {
   @PrimaryGeneratedColumn('uuid')
@@ -35,10 +40,7 @@ export class RecurringAvailability {
   @Column({ type: 'uuid' })
   doctorId: string;
 
-  @Column({
-    type: 'enum',
-    enum: DayOfWeek,
-  })
+  @Column({ type: 'enum', enum: DayOfWeek })
   dayOfWeek: DayOfWeek;
 
   /** 24-hour format: "HH:mm" e.g. "10:00", "13:30" */
@@ -48,6 +50,26 @@ export class RecurringAvailability {
   /** 24-hour format: "HH:mm" e.g. "13:00", "17:00" */
   @Column({ type: 'varchar', length: 5 })
   endTime: string;
+
+  /**
+   * How appointments are scheduled within this time window:
+   * STREAM = token-based queue (patients get sequential token numbers)
+   * WAVE   = exact time slots (server auto-divides window into slots)
+   */
+  @Column({ type: 'enum', enum: SchedulingMode, default: SchedulingMode.STREAM })
+  schedulingMode: SchedulingMode;
+
+  /** STREAM only: maximum number of tokens per session */
+  @Column({ type: 'int', nullable: true })
+  maxPatients: number | null;
+
+  /** WAVE only: duration of each generated slot in minutes */
+  @Column({ type: 'int', nullable: true })
+  slotDurationMins: number | null;
+
+  /** WAVE only: buffer/gap between slots in minutes (default 0) */
+  @Column({ type: 'int', nullable: true, default: 0 })
+  bufferTimeMins: number | null;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -129,7 +129,15 @@ export class AvailabilityService {
     userId: string,
     dto: CreateRecurringAvailabilityDto,
   ): Promise<RecurringAvailability> {
-    const { dayOfWeek, startTime, endTime } = dto;
+    const {
+      dayOfWeek,
+      startTime,
+      endTime,
+      schedulingMode,
+      maxPatients,
+      slotDurationMins,
+      bufferTimeMins,
+    } = dto;
     const profile = await this.getDoctorProfile(userId);
 
     this.validateTimeRange(startTime, endTime);
@@ -140,6 +148,10 @@ export class AvailabilityService {
       dayOfWeek,
       startTime,
       endTime,
+      schedulingMode,
+      maxPatients: maxPatients ?? null,
+      slotDurationMins: slotDurationMins ?? null,
+      bufferTimeMins: bufferTimeMins ?? 0,
     });
 
     return this.recurringRepo.save(slot);
@@ -216,7 +228,16 @@ export class AvailabilityService {
     userId: string,
     dto: CreateCustomAvailabilityDto,
   ): Promise<CustomAvailability> {
-    const { date, startTime, endTime, isAvailable = true } = dto;
+    const {
+      date,
+      startTime,
+      endTime,
+      isAvailable = true,
+      schedulingMode,
+      maxPatients,
+      slotDurationMins,
+      bufferTimeMins,
+    } = dto;
     const profile = await this.getDoctorProfile(userId);
 
     this.validateTimeRange(startTime, endTime);
@@ -228,6 +249,10 @@ export class AvailabilityService {
       startTime,
       endTime,
       isAvailable,
+      schedulingMode: schedulingMode ?? null,
+      maxPatients: maxPatients ?? null,
+      slotDurationMins: slotDurationMins ?? null,
+      bufferTimeMins: bufferTimeMins ?? 0,
     });
 
     return this.customRepo.save(slot);

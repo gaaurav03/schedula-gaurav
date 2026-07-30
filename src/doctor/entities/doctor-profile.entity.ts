@@ -37,13 +37,6 @@ export class DoctorProfile {
   @Column({ type: 'varchar', length: 200 })
   qualification: string;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
-  consultationFee: number;
-
-  /** E.g. "Mon–Fri 9AM–5PM" or "Weekdays 10AM–4PM" */
-  @Column({ type: 'varchar', length: 200 })
-  availabilityHours: string;
-
   @Column({ type: 'text', nullable: true })
   profileDetails: string | null;
 
