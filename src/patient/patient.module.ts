@@ -11,6 +11,7 @@ import { WaveSchedule } from '../doctor/entities/wave-schedule.entity';
 import { WaveSlot } from '../doctor/entities/wave-booking.entity';
 import { RecurringAvailability } from '../doctor/entities/recurring-availability.entity';
 import { CustomAvailability } from '../doctor/entities/custom-availability.entity';
+import { Appointment } from '../appointment/entities/appointment.entity';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
@@ -21,12 +22,13 @@ import { AuthModule } from '../auth/auth.module';
       StreamBooking,
       WaveSchedule,
       WaveSlot,
-      RecurringAvailability, // needed for smart availability resolver
-      CustomAvailability,    // needed for smart availability resolver
+      RecurringAvailability,
+      CustomAvailability,
+      Appointment,
     ]),
     AuthModule,
   ],
   controllers: [PatientController, PatientSchedulingController],
   providers: [PatientService, PatientSchedulingService],
 })
-export class PatientModule {}
+export class PatientModule { }

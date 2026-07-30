@@ -25,15 +25,12 @@ export class PatientSchedulingController {
   /**
    * GET /patient/schedule/available?doctorId=&date=YYYY-MM-DD
    *
-   * 🌟 SMART ENDPOINT — Resolves and returns all bookable sessions for a doctor on a date.
-   * Priority: Custom override > Recurring fallback
+   * THE unified endpoint — returns ALL bookable sessions for a doctor on a date.
+   * Includes both directly-created stream/wave sessions AND
+   * template-driven sessions (custom overrides + recurring availability).
    *
-   * - If custom override exists and isAvailable=false → { available: false }
-   * - If custom override exists and isAvailable=true  → serves that session (STREAM or WAVE)
-   * - If no custom override                           → falls back to recurring for that weekday
-   * - If no recurring either                          → { available: false }
-   *
-   * Sessions are auto-created on first query (lazy creation).
+   * Response contains both STREAM sessions (with streamId to book)
+   * and WAVE sessions (with individual slotIds to book).
    * ✅ PATIENT only
    */
   @Get('available')
@@ -45,21 +42,12 @@ export class PatientSchedulingController {
   }
 
   /**
-   * GET /patient/schedule/stream?doctorId=&date=YYYY-MM-DD
-   * View existing STREAM sessions for a doctor on a date (token availability).
-   */
-  @Get('stream')
-  getStreamSchedules(
-    @Query('doctorId') doctorId: string,
-    @Query('date') date: string,
-  ) {
-    return this.patientSchedulingService.getStreamSchedules(doctorId, date);
-  }
-
-  /**
    * POST /patient/schedule/stream/:streamId/book
-   * Book into a STREAM session → receive a sequential token number.
+   *
+   * Book a token in a STREAM session.
+   * Use the streamId returned from GET /patient/schedule/available.
    * ❌ Session full → 409 | ❌ Duplicate booking → 409 | ❌ Not found → 404
+   * ✅ PATIENT only
    */
   @Post('stream/:streamId/book')
   @HttpCode(HttpStatus.CREATED)
@@ -71,21 +59,12 @@ export class PatientSchedulingController {
   }
 
   /**
-   * GET /patient/schedule/wave?doctorId=&date=YYYY-MM-DD
-   * View available exact time slots (Wave slots) for a doctor on a date.
-   */
-  @Get('wave')
-  getAvailableWaveSlots(
-    @Query('doctorId') doctorId: string,
-    @Query('date') date: string,
-  ) {
-    return this.patientSchedulingService.getAvailableWaveSlots(doctorId, date);
-  }
-
-  /**
    * POST /patient/schedule/wave/:slotId/book
-   * Book an exact Wave time slot → receive confirmed appointment time.
+   *
+   * Book an exact WAVE time slot.
+   * Use the slotId from availableSlots[] in GET /patient/schedule/available.
    * ❌ Slot taken → 409 | ❌ Duplicate booking → 409 | ❌ Not found → 404
+   * ✅ PATIENT only
    */
   @Post('wave/:slotId/book')
   @HttpCode(HttpStatus.CREATED)

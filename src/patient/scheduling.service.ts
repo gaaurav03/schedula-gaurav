@@ -13,6 +13,7 @@ import { WaveSlot } from '../doctor/entities/wave-booking.entity';
 import { RecurringAvailability, DayOfWeek, SchedulingMode } from '../doctor/entities/recurring-availability.entity';
 import { CustomAvailability } from '../doctor/entities/custom-availability.entity';
 import { PatientProfile } from './entities/patient-profile.entity';
+import { Appointment, AppointmentStatus, AppointmentType } from '../appointment/entities/appointment.entity';
 
 /** Convert "HH:mm" to total minutes from midnight */
 function toMinutes(time: string): number {
@@ -92,6 +93,9 @@ export class PatientSchedulingService {
 
     @InjectRepository(PatientProfile)
     private readonly patientProfileRepo: Repository<PatientProfile>,
+
+    @InjectRepository(Appointment)
+    private readonly appointmentRepo: Repository<Appointment>,
   ) {}
 
   // ─── Helper ──────────────────────────────────────────────────────────────
@@ -106,54 +110,143 @@ export class PatientSchedulingService {
     return profile;
   }
 
-  // ─── Smart Availability Resolver ─────────────────────────────────────────
+  // ─── Unified Available Schedule ────────────────────────────────────────────
 
   /**
-   * GET /patient/schedule/available?doctorId=&date=
+   * GET /patient/schedule/available?doctorId=&date=YYYY-MM-DD
    *
-   * The single smart entry point for patients. For a given doctor + date:
-   *   1. Resolves availability: CUSTOM override > RECURRING fallback
-   *   2. If custom marks doctor unavailable → returns { available: false }
-   *   3. Auto-creates stream or wave sessions if they don't exist yet
-   *   4. Returns all bookable sessions with remaining capacity / slots
+   * THE single unified endpoint for patients. Returns ALL bookable sessions
+   * for a doctor on a given date — regardless of how the doctor created them.
+   *
+   * Step 1: Look for directly-created STREAM + WAVE sessions already in DB
+   * Step 2: Check availability templates (custom override > recurring weekly)
+   *         and auto-create sessions for uncovered time windows
+   * Step 3: Merge and return everything in one response
    */
   async getAvailableSchedule(doctorId: string, date: string) {
     if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(date)) {
-      throw new BadRequestException('Invalid date format. Use YYYY-MM-DD.');
+      throw new BadRequestException('Invalid date format. Use YYYY-MM-DD (e.g. 2026-07-30).');
     }
 
-    // ── Step 1: Resolve availability ────────────────────────────────────────
-    const customSlots = await this.customAvailabilityRepo.find({
+    const sessions: object[] = [];
+    const coveredWindows = new Set<string>(); // track windows already in sessions
+
+    // ── Step 1a: Directly-created STREAM sessions ──────────────────────────
+    const existingStreams = await this.streamScheduleRepo.find({
       where: { doctorId, date },
       order: { startTime: 'ASC' },
     });
 
-    type ResolvedSlot = {
-      startTime: string;
-      endTime: string;
-      schedulingMode: SchedulingMode;
-      maxPatients: number | null;
-      slotDurationMins: number | null;
-      bufferTimeMins: number | null;
-    };
+    for (const s of existingStreams) {
+      coveredWindows.add(`${s.startTime}-${s.endTime}`);
+      sessions.push({
+        appointmentType: 'STREAM',
+        resolvedFrom: s.schedulingType,
+        timeWindow: `${s.startTime} - ${s.endTime}`,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        streamId: s.id,
+        tokensAvailable: s.maxPatients - s.currentCount,
+        totalCapacity: s.maxPatients,
+        isFull: s.currentCount >= s.maxPatients,
+      });
+    }
 
-    let resolvedSlots: ResolvedSlot[] = [];
-    let resolvedFrom: 'CUSTOM' | 'RECURRING';
+    // ── Step 1b: Directly-created WAVE sessions ────────────────────────────
+    const existingWaves = await this.waveScheduleRepo.find({
+      where: { doctorId, date },
+      order: { startTime: 'ASC' },
+    });
 
-    if (customSlots.length > 0) {
-      // If all custom overrides are "unavailable", block this date
-      const available = customSlots.filter((s) => s.isAvailable);
-      if (available.length === 0) {
-        return {
-          available: false,
-          date,
-          reason: 'Doctor has marked this date as unavailable.',
-        };
+    for (const w of existingWaves) {
+      coveredWindows.add(`${w.startTime}-${w.endTime}`);
+      const availableSlots = await this.waveSlotRepo.find({
+        where: { waveId: w.id, isBooked: false },
+        order: { slotStart: 'ASC' },
+      });
+      sessions.push({
+        appointmentType: 'WAVE',
+        resolvedFrom: w.schedulingType,
+        timeWindow: `${w.startTime} - ${w.endTime}`,
+        startTime: w.startTime,
+        endTime: w.endTime,
+        waveId: w.id,
+        availableSlots: availableSlots.map((sl) => ({
+          id: sl.id,
+          slotTime: `${sl.slotStart} - ${sl.slotEnd}`,
+          startTime: sl.slotStart,
+          endTime: sl.slotEnd,
+        })),
+        slotsRemaining: availableSlots.length,
+      });
+    }
+
+    // ── Step 2a: Custom overrides for this specific date ────────────────────
+    const customOverrides = await this.customAvailabilityRepo.find({
+      where: { doctorId, date },
+      order: { startTime: 'ASC' },
+    });
+
+    if (customOverrides.length > 0) {
+      const availableOverrides = customOverrides.filter((c) => c.isAvailable);
+      // Doctor explicitly blocked this entire day with no direct sessions
+      if (availableOverrides.length === 0 && sessions.length === 0) {
+        return { available: false, date, reason: 'Doctor has marked this date as unavailable.' };
       }
-      resolvedSlots = available as ResolvedSlot[];
-      resolvedFrom = 'CUSTOM';
+
+      for (const c of availableOverrides) {
+        const key = `${c.startTime}-${c.endTime}`;
+        if (coveredWindows.has(key)) continue;
+        coveredWindows.add(key);
+
+        if (c.schedulingMode === SchedulingMode.STREAM && c.maxPatients) {
+          const session = await this.streamScheduleRepo.save(
+            this.streamScheduleRepo.create({
+              doctorId, date, startTime: c.startTime, endTime: c.endTime,
+              maxPatients: c.maxPatients, currentCount: 0,
+              schedulingType: SchedulingType.CUSTOM,
+            }),
+          );
+          sessions.push({
+            appointmentType: 'STREAM', resolvedFrom: 'CUSTOM',
+            timeWindow: `${c.startTime} - ${c.endTime}`,
+            startTime: c.startTime, endTime: c.endTime,
+            streamId: session.id,
+            tokensAvailable: session.maxPatients,
+            totalCapacity: session.maxPatients,
+            isFull: false,
+          });
+        } else if (c.schedulingMode === SchedulingMode.WAVE && c.slotDurationMins) {
+          const waveSchedule = await this.waveScheduleRepo.save(
+            this.waveScheduleRepo.create({
+              doctorId, date, startTime: c.startTime, endTime: c.endTime,
+              slotDurationMins: c.slotDurationMins, bufferTimeMins: c.bufferTimeMins ?? 0,
+              schedulingType: SchedulingType.CUSTOM,
+            }),
+          );
+          await this.waveSlotRepo.save(
+            buildWaveSlots(waveSchedule.id, doctorId, date, c.startTime, c.endTime,
+              c.slotDurationMins, c.bufferTimeMins ?? 0),
+          );
+          const slots = await this.waveSlotRepo.find({
+            where: { waveId: waveSchedule.id, isBooked: false },
+            order: { slotStart: 'ASC' },
+          });
+          sessions.push({
+            appointmentType: 'WAVE', resolvedFrom: 'CUSTOM',
+            timeWindow: `${c.startTime} - ${c.endTime}`,
+            startTime: c.startTime, endTime: c.endTime,
+            waveId: waveSchedule.id,
+            availableSlots: slots.map((sl) => ({
+              id: sl.id, slotTime: `${sl.slotStart} - ${sl.slotEnd}`,
+              startTime: sl.slotStart, endTime: sl.slotEnd,
+            })),
+            slotsRemaining: slots.length,
+          });
+        }
+      }
     } else {
-      // Fall back to recurring availability for this day of week
+      // ── Step 2b: No custom override → check recurring template for weekday ──
       const [year, month, day] = date.split('-').map(Number);
       const dayOfWeek = DAY_MAP[new Date(year, month - 1, day).getDay()];
 
@@ -162,136 +255,72 @@ export class PatientSchedulingService {
         order: { startTime: 'ASC' },
       });
 
-      if (recurring.length === 0) {
-        return {
-          available: false,
-          date,
-          reason: 'Doctor has no availability configured for this date.',
-        };
-      }
-      resolvedSlots = recurring as ResolvedSlot[];
-      resolvedFrom = 'RECURRING';
-    }
+      for (const r of recurring) {
+        const key = `${r.startTime}-${r.endTime}`;
+        if (coveredWindows.has(key)) continue;
+        coveredWindows.add(key);
 
-    // ── Step 2: For each resolved window, find-or-create the session ─────────
-    const sessions: object[] = [];
-
-    for (const slot of resolvedSlots) {
-      const { startTime, endTime, schedulingMode, maxPatients, slotDurationMins, bufferTimeMins } = slot;
-      const schedulingType =
-        resolvedFrom === 'CUSTOM' ? SchedulingType.CUSTOM : SchedulingType.RECURRING;
-
-      if (schedulingMode === SchedulingMode.STREAM) {
-        // Find existing stream session or auto-create
-        let session = await this.streamScheduleRepo.findOne({
-          where: { doctorId, date, startTime, endTime },
-        });
-
-        if (!session) {
-          session = await this.streamScheduleRepo.save(
+        if (r.schedulingMode === SchedulingMode.STREAM && r.maxPatients) {
+          const session = await this.streamScheduleRepo.save(
             this.streamScheduleRepo.create({
-              doctorId,
-              date,
-              startTime,
-              endTime,
-              maxPatients: maxPatients!,
-              currentCount: 0,
-              schedulingType,
+              doctorId, date, startTime: r.startTime, endTime: r.endTime,
+              maxPatients: r.maxPatients, currentCount: 0,
+              schedulingType: SchedulingType.RECURRING,
             }),
           );
-        }
-
-        sessions.push({
-          appointmentType: 'STREAM',
-          resolvedFrom,
-          timeWindow: `${startTime} – ${endTime}`,
-          streamId: session.id,
-          tokensAvailable: session.maxPatients - session.currentCount,
-          totalCapacity: session.maxPatients,
-          isFull: session.currentCount >= session.maxPatients,
-        });
-      } else {
-        // WAVE — find existing wave schedule or auto-create with slots
-        let waveSchedule = await this.waveScheduleRepo.findOne({
-          where: { doctorId, date, startTime, endTime },
-        });
-
-        if (!waveSchedule) {
-          waveSchedule = await this.waveScheduleRepo.save(
+          sessions.push({
+            appointmentType: 'STREAM', resolvedFrom: 'RECURRING',
+            timeWindow: `${r.startTime} - ${r.endTime}`,
+            startTime: r.startTime, endTime: r.endTime,
+            streamId: session.id,
+            tokensAvailable: session.maxPatients,
+            totalCapacity: session.maxPatients,
+            isFull: false,
+          });
+        } else if (r.schedulingMode === SchedulingMode.WAVE && r.slotDurationMins) {
+          const waveSchedule = await this.waveScheduleRepo.save(
             this.waveScheduleRepo.create({
-              doctorId,
-              date,
-              startTime,
-              endTime,
-              slotDurationMins: slotDurationMins!,
-              bufferTimeMins: bufferTimeMins ?? 0,
-              schedulingType,
+              doctorId, date, startTime: r.startTime, endTime: r.endTime,
+              slotDurationMins: r.slotDurationMins, bufferTimeMins: r.bufferTimeMins ?? 0,
+              schedulingType: SchedulingType.RECURRING,
             }),
           );
-
-          const slotsToCreate = buildWaveSlots(
-            waveSchedule.id,
-            doctorId,
-            date,
-            startTime,
-            endTime,
-            slotDurationMins!,
-            bufferTimeMins ?? 0,
+          await this.waveSlotRepo.save(
+            buildWaveSlots(waveSchedule.id, doctorId, date, r.startTime, r.endTime,
+              r.slotDurationMins, r.bufferTimeMins ?? 0),
           );
-          await this.waveSlotRepo.save(slotsToCreate);
+          const slots = await this.waveSlotRepo.find({
+            where: { waveId: waveSchedule.id, isBooked: false },
+            order: { slotStart: 'ASC' },
+          });
+          sessions.push({
+            appointmentType: 'WAVE', resolvedFrom: 'RECURRING',
+            timeWindow: `${r.startTime} - ${r.endTime}`,
+            startTime: r.startTime, endTime: r.endTime,
+            waveId: waveSchedule.id,
+            availableSlots: slots.map((sl) => ({
+              id: sl.id, slotTime: `${sl.slotStart} - ${sl.slotEnd}`,
+              startTime: sl.slotStart, endTime: sl.slotEnd,
+            })),
+            slotsRemaining: slots.length,
+          });
         }
-
-        const availableSlots = await this.waveSlotRepo.find({
-          where: { waveId: waveSchedule.id, isBooked: false },
-          order: { slotStart: 'ASC' },
-        });
-
-        sessions.push({
-          appointmentType: 'WAVE',
-          resolvedFrom,
-          waveId: waveSchedule.id,
-          timeWindow: `${startTime} – ${endTime}`,
-          availableSlots: availableSlots.map((s) => ({
-            id: s.id,
-            slotTime: `${s.slotStart} – ${s.slotEnd}`,
-          })),
-        });
       }
     }
 
-    return { available: true, date, sessions };
+    if (sessions.length === 0) {
+      return { available: false, date, reason: 'Doctor has no availability configured for this date.' };
+    }
+
+    return { available: true, date, totalSessions: sessions.length, sessions };
   }
 
   // ─── STREAM: Token-Based Patient Booking ─────────────────────────────────
 
   /**
-   * GET /patient/schedule/stream?doctorId=&date=
-   * View STREAM sessions for a doctor on a date.
-   */
-  async getStreamSchedules(doctorId: string, date: string) {
-    const streams = await this.streamScheduleRepo.find({
-      where: { doctorId, date },
-      order: { startTime: 'ASC' },
-    });
-
-    return {
-      type: 'STREAM',
-      doctorId,
-      date,
-      sessions: streams.map((s) => ({
-        id: s.id,
-        timeWindow: `${s.startTime} – ${s.endTime}`,
-        schedulingType: s.schedulingType,
-        tokensAvailable: s.maxPatients - s.currentCount,
-        totalCapacity: s.maxPatients,
-        isFull: s.currentCount >= s.maxPatients,
-      })),
-    };
-  }
-
-  /**
    * POST /patient/schedule/stream/:streamId/book
    * Book into a STREAM session → receive sequential token number.
+   * Also creates a unified Appointment record.
    */
   async bookStream(userId: string, streamId: string) {
     const patient = await this.getPatientProfile(userId);
@@ -317,22 +346,41 @@ export class PatientSchedulingService {
     }
 
     const tokenNumber = stream.currentCount + 1;
-    const booking = this.streamBookingRepo.create({
-      streamId,
-      patientId: patient.id,
-      tokenNumber,
-      bookedAt: new Date(),
-    });
-    await this.streamBookingRepo.save(booking);
+    const savedBooking = await this.streamBookingRepo.save(
+      this.streamBookingRepo.create({
+        streamId,
+        patientId: patient.id,
+        tokenNumber,
+        bookedAt: new Date(),
+      }),
+    );
 
     stream.currentCount += 1;
     await this.streamScheduleRepo.save(stream);
+
+    // Create unified appointment record so it appears in GET /appointment/my
+    await this.appointmentRepo.save(
+      this.appointmentRepo.create({
+        doctorId: stream.doctorId,
+        patientId: patient.id,
+        date: stream.date,
+        startTime: stream.startTime,
+        endTime: stream.endTime,
+        status: AppointmentStatus.BOOKED,
+        appointmentType: AppointmentType.STREAM,
+        schedulingType: stream.schedulingType,
+        tokenNumber,
+        streamBookingId: savedBooking.id,
+        waveSlotId: null,
+        cancelledAt: null,
+      }),
+    );
 
     return {
       message: 'Stream booking confirmed! Please arrive within the time window.',
       appointmentType: 'STREAM',
       schedulingType: stream.schedulingType,
-      timeWindow: `${stream.startTime} – ${stream.endTime}`,
+      timeWindow: `${stream.startTime} - ${stream.endTime}`,
       date: stream.date,
       tokenNumber,
       tokensRemaining: `${stream.maxPatients - stream.currentCount}/${stream.maxPatients} remaining`,
@@ -342,32 +390,9 @@ export class PatientSchedulingService {
   // ─── WAVE: Exact Slot Patient Booking ────────────────────────────────────
 
   /**
-   * GET /patient/schedule/wave?doctorId=&date=
-   * View available exact time slots for a doctor on a date.
-   */
-  async getAvailableWaveSlots(doctorId: string, date: string) {
-    const slots = await this.waveSlotRepo.find({
-      where: { doctorId, date, isBooked: false },
-      order: { slotStart: 'ASC' },
-      relations: ['wave'],
-    });
-
-    return {
-      type: 'WAVE',
-      doctorId,
-      date,
-      availableSlots: slots.map((slot) => ({
-        id: slot.id,
-        slotTime: `${slot.slotStart} – ${slot.slotEnd}`,
-        schedulingType: slot.wave?.schedulingType ?? null,
-        isBooked: slot.isBooked,
-      })),
-    };
-  }
-
-  /**
    * POST /patient/schedule/wave/:slotId/book
    * Book an exact WAVE slot → receive confirmed appointment time.
+   * Also creates a unified Appointment record.
    */
   async bookWaveSlot(userId: string, slotId: string) {
     const patient = await this.getPatientProfile(userId);
@@ -391,7 +416,7 @@ export class PatientSchedulingService {
     });
     if (alreadyBooked) {
       throw new ConflictException(
-        `You already have a booking in this schedule at ${alreadyBooked.slotStart}–${alreadyBooked.slotEnd}.`,
+        `You already have a booking in this schedule at ${alreadyBooked.slotStart}-${alreadyBooked.slotEnd}.`,
       );
     }
 
@@ -400,11 +425,29 @@ export class PatientSchedulingService {
     slot.bookedAt = new Date();
     await this.waveSlotRepo.save(slot);
 
+    // Create unified appointment record so it appears in GET /appointment/my
+    await this.appointmentRepo.save(
+      this.appointmentRepo.create({
+        doctorId: slot.doctorId,
+        patientId: patient.id,
+        date: slot.date,
+        startTime: slot.slotStart,
+        endTime: slot.slotEnd,
+        status: AppointmentStatus.BOOKED,
+        appointmentType: AppointmentType.WAVE,
+        schedulingType: slot.wave?.schedulingType ?? SchedulingType.RECURRING,
+        tokenNumber: null,
+        streamBookingId: null,
+        waveSlotId: slot.id,
+        cancelledAt: null,
+      }),
+    );
+
     return {
       message: 'Appointment confirmed! You have an exact appointment time.',
       appointmentType: 'WAVE',
       schedulingType: slot.wave?.schedulingType ?? null,
-      appointmentTime: `${slot.slotStart} – ${slot.slotEnd}`,
+      appointmentTime: `${slot.slotStart} - ${slot.slotEnd}`,
       date: slot.date,
     };
   }
