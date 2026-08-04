@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
 import { Appointment } from './entities/appointment.entity';
 import { AppointmentService } from './appointment.service';
 import { AppointmentController, DoctorAppointmentController } from './appointment.controller';
@@ -26,6 +25,6 @@ import { AuthModule } from '../auth/auth.module';
     AuthModule,
   ],
   controllers: [AppointmentController, DoctorAppointmentController],
-  providers: [AppointmentService, DataSource],
+  providers: [AppointmentService],
 })
 export class AppointmentModule {}
