@@ -18,6 +18,7 @@ import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Role } from '../users/user.entity';
 import { AppointmentService } from './appointment.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 
 // ─── Patient Routes: /appointment/* ──────────────────────────────────────────
 
@@ -37,7 +38,7 @@ export class AppointmentController {
    * - Future date/time enforced
    * - Duplicate booking prevented
    * - Session capacity enforced for STREAM
-   * - ✅ PATIENT only
+   * ✅ PATIENT only
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -67,6 +68,7 @@ export class AppointmentController {
    * - Only appointment owner can cancel
    * - Cannot cancel already cancelled appointments
    * - Cannot cancel past appointments
+   * - 30-minute cutoff enforced (cannot cancel < 30 mins before appointment)
    * - Slot is freed/rolled back automatically
    * ✅ PATIENT only
    */
@@ -76,6 +78,27 @@ export class AppointmentController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.appointmentService.cancelAppointment(user.id, id);
+  }
+
+  /**
+   * PATCH /appointment/:id/reschedule
+   *
+   * Reschedule an active appointment to a new date and time.
+   * - Only the appointment owner can reschedule
+   * - Cannot reschedule a cancelled or already-rescheduled appointment
+   * - 30-minute cutoff enforced on the old appointment
+   * - New slot must be in the future and different from the current slot
+   * - Old slot is atomically released and new slot atomically reserved
+   * - If target slot is unavailable, a next-available suggestion is returned in the error
+   * ✅ PATIENT only
+   */
+  @Patch(':id/reschedule')
+  rescheduleAppointment(
+    @GetUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RescheduleAppointmentDto,
+  ) {
+    return this.appointmentService.rescheduleAppointment(user.id, id, dto);
   }
 }
 
@@ -92,7 +115,7 @@ export class DoctorAppointmentController {
    *
    * View all appointments booked with the logged-in doctor.
    * Optional filters:
-   *   - ?status=BOOKED|CANCELLED
+   *   - ?status=BOOKED|CANCELLED|RESCHEDULED
    *   - ?date=YYYY-MM-DD
    *
    * Returns: patient details, appointment date, slot timing, status, token number.

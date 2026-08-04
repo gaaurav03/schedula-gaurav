@@ -14,6 +14,7 @@ import { SchedulingType } from '../../doctor/entities/stream-schedule.entity';
 export enum AppointmentStatus {
   BOOKED = 'BOOKED',
   CANCELLED = 'CANCELLED',
+  RESCHEDULED = 'RESCHEDULED',
 }
 
 export enum AppointmentType {
@@ -96,6 +97,16 @@ export class Appointment {
 
   @Column({ type: 'timestamp', nullable: true })
   cancelledAt: Date | null;
+
+  // ── Rescheduling ──────────────────────────────────────────────────────────
+
+  /** Timestamp of the most recent reschedule action */
+  @Column({ type: 'timestamp', nullable: true })
+  rescheduledAt: Date | null;
+
+  /** Optional patient-provided or system reason for the reschedule */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  rescheduleReason: string | null;
 
   @CreateDateColumn()
   createdAt: Date;
