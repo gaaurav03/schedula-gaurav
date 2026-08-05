@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Body,
   Param,
   Query,
   HttpCode,
@@ -15,6 +16,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Role } from '../users/user.entity';
 import { PatientSchedulingService } from './scheduling.service';
+import { BookScheduleDto } from './dto/book-schedule.dto';
 
 @Controller('patient/schedule')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -42,11 +44,33 @@ export class PatientSchedulingController {
   }
 
   /**
+   * POST /patient/schedule/book
+   *
+   * Unified booking endpoint — works for both WAVE slots and STREAM sessions.
+   * Patient provides a single targetId from GET /patient/schedule/available:
+   *   - WAVE:   use availableSlots[].id
+   *   - STREAM: use sessions[].streamId
+   *
+   * The system auto-detects whether the targetId is a WaveSlot or StreamSchedule
+   * and books accordingly — no need to know the type in advance.
+   *
+   * Body: { "targetId": "<uuid>" }
+   * ✅ PATIENT only
+   */
+  @Post('book')
+  @HttpCode(HttpStatus.CREATED)
+  bookUnified(
+    @GetUser() user: { id: string },
+    @Body() dto: BookScheduleDto,
+  ) {
+    return this.patientSchedulingService.bookUnified(user.id, dto.targetId);
+  }
+
+  /**
    * POST /patient/schedule/stream/:streamId/book
    *
-   * Book a token in a STREAM session.
-   * Use the streamId returned from GET /patient/schedule/available.
-   * ❌ Session full → 409 | ❌ Duplicate booking → 409 | ❌ Not found → 404
+   * [Legacy] Book a token in a STREAM session directly.
+   * Prefer using POST /patient/schedule/book instead.
    * ✅ PATIENT only
    */
   @Post('stream/:streamId/book')
@@ -61,9 +85,8 @@ export class PatientSchedulingController {
   /**
    * POST /patient/schedule/wave/:slotId/book
    *
-   * Book an exact WAVE time slot.
-   * Use the slotId from availableSlots[] in GET /patient/schedule/available.
-   * ❌ Slot taken → 409 | ❌ Duplicate booking → 409 | ❌ Not found → 404
+   * [Legacy] Book an exact WAVE time slot directly.
+   * Prefer using POST /patient/schedule/book instead.
    * ✅ PATIENT only
    */
   @Post('wave/:slotId/book')
