@@ -68,6 +68,7 @@ export class AppointmentController {
    * - Only appointment owner can cancel
    * - Cannot cancel already cancelled appointments
    * - Cannot cancel past appointments
+   * - 30-minute cutoff enforced (cannot cancel < 30 mins before appointment)
    * - Slot is freed/rolled back automatically
    * ✅ PATIENT only
    */
@@ -82,11 +83,13 @@ export class AppointmentController {
   /**
    * PATCH /appointment/:id/reschedule
    *
-   * Reschedule an active appointment to a new slot/session.
-   * - Only appointment owner can reschedule
-   * - Cannot reschedule within 30 minutes of the current appointment start
-   * - Cannot reschedule to the same slot (same date + startTime + endTime)
-   * - Atomic swap: old slot released, new slot reserved in one transaction
+   * Reschedule an active appointment to a new date and time.
+   * - Only the appointment owner can reschedule
+   * - Cannot reschedule a cancelled appointment
+   * - 30-minute cutoff enforced on the old appointment
+   * - New slot must be in the future and different from the current slot
+   * - Old slot is atomically released and new slot atomically reserved
+   * - If target slot is unavailable, a next-available suggestion is returned in the error
    * ✅ PATIENT only
    */
   @Patch(':id/reschedule')
@@ -113,7 +116,7 @@ export class DoctorAppointmentController {
    *
    * View all appointments booked with the logged-in doctor.
    * Optional filters:
-   *   - ?status=BOOKED|CANCELLED
+   *   - ?status=BOOKED|CANCELLED|RESCHEDULED
    *   - ?date=YYYY-MM-DD
    *
    * Returns: patient details, appointment date, slot timing, status, token number.

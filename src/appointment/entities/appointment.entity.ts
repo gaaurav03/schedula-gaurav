@@ -98,7 +98,7 @@ export class Appointment {
   @Column({ type: 'timestamp', nullable: true })
   cancelledAt: Date | null;
 
-  // ── Rescheduling ────────────────────────────────────────────────────
+  // ── Rescheduling ──────────────────────────────────────────────────────────
 
   /** Timestamp of the most recent reschedule action */
   @Column({ type: 'timestamp', nullable: true })
