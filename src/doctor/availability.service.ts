@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, MoreThan } from 'typeorm';
+import { DataSource, Repository, MoreThan, MoreThanOrEqual } from 'typeorm';
 import { RecurringAvailability, DayOfWeek, SchedulingMode } from './entities/recurring-availability.entity';
 import { CustomAvailability } from './entities/custom-availability.entity';
 import { DoctorProfile } from './entities/doctor-profile.entity';
@@ -233,7 +233,7 @@ export class AvailabilityService {
 
     // ── Tier 3: nearest future date with any free wave slot ───────────────
     const futureSlot = await this.waveSlotRepo.findOne({
-      where: { doctorId, isBooked: false, date: MoreThan(today) },
+      where: { doctorId, isBooked: false, date: MoreThanOrEqual(today) },
       order: { date: 'ASC', slotStart: 'ASC' },
     });
     if (futureSlot) return { slot: futureSlot, tier: 'NEXT_AVAILABLE_DATE' };
@@ -269,7 +269,7 @@ export class AvailabilityService {
 
     // ── Tier 3: Nearest future stream session with capacity ───────────────
     const futureSessions = await this.streamScheduleRepo.find({
-      where: { doctorId, date: MoreThan(today) },
+      where: { doctorId, date: MoreThanOrEqual(today) },
       order: { date: 'ASC', startTime: 'ASC' },
     });
     const futureSession = futureSessions.find((s) => s.currentCount < s.maxPatients);
@@ -359,7 +359,7 @@ export class AvailabilityService {
     // ─────────────────────────────────────────────────────────────────────────
     if (mode === SchedulingMode.WAVE) {
       const futurWaveSchedules = await this.waveScheduleRepo.find({
-        where: { recurringAvailabilityId: slotId, date: MoreThan(today) },
+        where: { recurringAvailabilityId: slotId, date: MoreThanOrEqual(today) },
         order: { date: 'ASC' },
       });
 
@@ -541,7 +541,7 @@ export class AvailabilityService {
     // STREAM MODE
     // ─────────────────────────────────────────────────────────────────────────
     const futureStreamSchedules = await this.streamScheduleRepo.find({
-      where: { recurringAvailabilityId: slotId, date: MoreThan(today) },
+      where: { recurringAvailabilityId: slotId, date: MoreThanOrEqual(today) },
       order: { date: 'ASC' },
     });
 
