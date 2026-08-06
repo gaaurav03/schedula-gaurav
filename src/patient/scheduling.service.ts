@@ -266,6 +266,7 @@ export class PatientSchedulingService {
               doctorId, date, startTime: r.startTime, endTime: r.endTime,
               maxPatients: r.maxPatients, currentCount: 0,
               schedulingType: SchedulingType.RECURRING,
+              recurringAvailabilityId: r.id,  // ← elastic scheduling FK
             }),
           );
           sessions.push({
@@ -283,6 +284,7 @@ export class PatientSchedulingService {
               doctorId, date, startTime: r.startTime, endTime: r.endTime,
               slotDurationMins: r.slotDurationMins, bufferTimeMins: r.bufferTimeMins ?? 0,
               schedulingType: SchedulingType.RECURRING,
+              recurringAvailabilityId: r.id,  // ← elastic scheduling FK
             }),
           );
           await this.waveSlotRepo.save(

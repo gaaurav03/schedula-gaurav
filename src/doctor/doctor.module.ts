@@ -14,6 +14,8 @@ import { AvailabilityService } from './availability.service';
 import { SchedulingController } from './scheduling.controller';
 import { SchedulingService } from './scheduling.service';
 import { AuthModule } from '../auth/auth.module';
+import { Appointment } from '../appointment/entities/appointment.entity';
+import { PatientProfile } from '../patient/entities/patient-profile.entity';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import { AuthModule } from '../auth/auth.module';
       StreamBooking,
       WaveSchedule,
       WaveSlot,
+      Appointment,       // needed by AvailabilityService for elastic reassignment
+      PatientProfile,    // needed for patient name in conflict responses
     ]),
     AuthModule,
   ],

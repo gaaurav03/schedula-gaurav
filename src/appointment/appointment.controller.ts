@@ -18,6 +18,7 @@ import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Role } from '../users/user.entity';
 import { AppointmentService } from './appointment.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 
 // ─── Patient Routes: /appointment/* ──────────────────────────────────────────
 
@@ -77,7 +78,27 @@ export class AppointmentController {
   ) {
     return this.appointmentService.cancelAppointment(user.id, id);
   }
+
+  /**
+   * PATCH /appointment/:id/reschedule
+   *
+   * Reschedule an active appointment to a new slot/session.
+   * - Only appointment owner can reschedule
+   * - Cannot reschedule within 30 minutes of the current appointment start
+   * - Cannot reschedule to the same slot (same date + startTime + endTime)
+   * - Atomic swap: old slot released, new slot reserved in one transaction
+   * ✅ PATIENT only
+   */
+  @Patch(':id/reschedule')
+  rescheduleAppointment(
+    @GetUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RescheduleAppointmentDto,
+  ) {
+    return this.appointmentService.rescheduleAppointment(user.id, id, dto);
+  }
 }
+
 
 // ─── Doctor Routes: /doctor/appointments ─────────────────────────────────────
 

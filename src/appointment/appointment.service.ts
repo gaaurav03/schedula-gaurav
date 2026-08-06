@@ -6,9 +6,10 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Appointment, AppointmentStatus, AppointmentType } from './entities/appointment.entity';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 import { StreamSchedule, SchedulingType } from '../doctor/entities/stream-schedule.entity';
 import { StreamBooking } from '../doctor/entities/stream-slot.entity';
 import { WaveSchedule } from '../doctor/entities/wave-schedule.entity';
@@ -39,6 +40,8 @@ export class AppointmentService {
 
     @InjectRepository(PatientProfile)
     private readonly patientProfileRepo: Repository<PatientProfile>,
+
+    private readonly dataSource: DataSource,
   ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -66,15 +69,58 @@ export class AppointmentService {
   }
 
   /** Check whether a given date + startTime is strictly in the future */
-  private assertFuture(date: string, startTime: string): void {
+  private assertFuture(date: string, startTime: string, label = 'Appointment'): void {
     const [year, month, day] = date.split('-').map(Number);
     const [hour, minute] = startTime.split(':').map(Number);
     const appointmentDateTime = new Date(year, month - 1, day, hour, minute);
     if (appointmentDateTime <= new Date()) {
       throw new BadRequestException(
-        'Cannot book appointments for a past date or time. Please select a future slot.',
+        `${label} cannot be in the past. Please select a future date and time.`,
       );
     }
+  }
+
+  /**
+   * Assert that at least 30 minutes remain before the appointment starts.
+   * Used for both cancellation and rescheduling cutoff enforcement.
+   */
+  private assertCutoff(date: string, startTime: string, action = 'cancel or reschedule'): void {
+    const [year, month, day] = date.split('-').map(Number);
+    const [hour, minute] = startTime.split(':').map(Number);
+    const appointmentTime = new Date(year, month - 1, day, hour, minute);
+    const diffMins = (appointmentTime.getTime() - Date.now()) / (1000 * 60);
+    if (diffMins <= 30) {
+      throw new BadRequestException(
+        `Cannot ${action} an appointment that starts in less than 30 minutes.`,
+      );
+    }
+  }
+
+  /** Find the next open WAVE slot for the doctor on a given date */
+  private async nextAvailableWaveSlot(doctorId: string, date: string) {
+    const slot = await this.waveSlotRepo.findOne({
+      where: { doctorId, date, isBooked: false },
+      order: { slotStart: 'ASC' },
+    });
+    if (!slot) return null;
+    return { slotId: slot.id, startTime: slot.slotStart, endTime: slot.slotEnd, date };
+  }
+
+  /** Find the next STREAM session with remaining capacity for the doctor on a given date */
+  private async nextAvailableStreamSession(doctorId: string, date: string) {
+    const sessions = await this.streamScheduleRepo.find({
+      where: { doctorId, date },
+      order: { startTime: 'ASC' },
+    });
+    const available = sessions.find((s) => s.currentCount < s.maxPatients);
+    if (!available) return null;
+    return {
+      streamId: available.id,
+      startTime: available.startTime,
+      endTime: available.endTime,
+      date,
+      tokensRemaining: available.maxPatients - available.currentCount,
+    };
   }
 
   /** Shared appointment response shape */
@@ -93,6 +139,8 @@ export class AppointmentService {
       schedulingType: appt.schedulingType,
       tokenNumber: appt.tokenNumber,
       cancelledAt: appt.cancelledAt,
+      rescheduledAt: appt.rescheduledAt ?? null,
+      rescheduleReason: appt.rescheduleReason ?? null,
       createdAt: appt.createdAt,
       ...(doctor && {
         doctor: {
@@ -114,6 +162,7 @@ export class AppointmentService {
       }),
     };
   }
+
 
   // ─── BOOK APPOINTMENT ─────────────────────────────────────────────────────
 
@@ -340,6 +389,170 @@ export class AppointmentService {
       endTime: appointment.endTime,
       cancelledAt: appointment.cancelledAt,
     };
+  }
+
+  // ─── PATIENT: RESCHEDULE APPOINTMENT ─────────────────────────────────────
+
+  /**
+   * PATCH /appointment/:id/reschedule
+   * Moves a WAVE or STREAM appointment to a new slot/session.
+   * Rules:
+   *  - 30-minute cutoff: cannot reschedule within 30 mins of current start.
+   *  - Cannot reschedule to the same slot (date + startTime + endTime identical).
+   *  - Atomic swap: releases old slot/token before claiming the new one.
+   */
+  async rescheduleAppointment(
+    userId: string,
+    appointmentId: string,
+    dto: RescheduleAppointmentDto,
+  ) {
+    const { newDate, newStartTime, newEndTime, reason } = dto;
+    const patient = await this.getPatient(userId);
+
+    const appointment = await this.appointmentRepo.findOne({ where: { id: appointmentId } });
+    if (!appointment) throw new NotFoundException(`Appointment "${appointmentId}" not found.`);
+    if (appointment.patientId !== patient.id)
+      throw new ForbiddenException('You can only reschedule your own appointments.');
+    if (appointment.status === AppointmentStatus.CANCELLED)
+      throw new ConflictException('Cannot reschedule a cancelled appointment.');
+
+    // 30-minute cutoff on CURRENT appointment
+    this.assertCutoff(appointment.date, appointment.startTime, 'reschedule');
+
+    // Same-slot guard
+    if (
+      appointment.date === newDate &&
+      appointment.startTime === newStartTime &&
+      appointment.endTime === newEndTime
+    ) {
+      throw new BadRequestException(
+        'The new slot is the same as the current appointment. Please choose a different time.',
+      );
+    }
+
+    // New slot must be in the future
+    this.assertFuture(newDate, newStartTime, 'New appointment slot');
+
+    const previousSlot = {
+      date: appointment.date,
+      startTime: appointment.startTime,
+      endTime: appointment.endTime,
+      type: appointment.appointmentType,
+    };
+
+    return this.dataSource.transaction(async (em) => {
+      // ── WAVE appointment ───────────────────────────────────────────────────
+      if (appointment.appointmentType === AppointmentType.WAVE) {
+        // Release old slot
+        if (appointment.waveSlotId) {
+          await em.update(WaveSlot, appointment.waveSlotId, {
+            isBooked: false, patientId: null, bookedAt: null,
+          });
+        }
+
+        // Find and claim new slot
+        const newSlot = await em.findOne(WaveSlot, {
+          where: { doctorId: appointment.doctorId, date: newDate, slotStart: newStartTime, slotEnd: newEndTime },
+        });
+        if (!newSlot) {
+          const suggestion = await this.nextAvailableWaveSlot(appointment.doctorId, newDate);
+          throw new NotFoundException({
+            message: `No wave slot found for ${newStartTime}–${newEndTime} on ${newDate}. Use GET /patient/schedule/available to find available slots.`,
+            suggestion,
+          });
+        }
+        if (newSlot.isBooked) {
+          const suggestion = await this.nextAvailableWaveSlot(appointment.doctorId, newDate);
+          throw new ConflictException({
+            message: `The slot ${newStartTime}–${newEndTime} on ${newDate} is already booked.`,
+            suggestion,
+          });
+        }
+
+        await em.update(WaveSlot, newSlot.id, {
+          isBooked: true, patientId: patient.id, bookedAt: new Date(),
+        });
+
+        await em.update(Appointment, appointmentId, {
+          date: newDate,
+          startTime: newStartTime,
+          endTime: newEndTime,
+          waveSlotId: newSlot.id,
+          status: AppointmentStatus.RESCHEDULED,
+          rescheduledAt: new Date(),
+          rescheduleReason: reason ?? null,
+        });
+
+        return {
+          message: 'Appointment rescheduled successfully! Your new slot is confirmed.',
+          previousSlot,
+          newSlot: { date: newDate, startTime: newStartTime, endTime: newEndTime },
+          status: AppointmentStatus.RESCHEDULED,
+        };
+      }
+
+      // ── STREAM appointment ─────────────────────────────────────────────────
+      if (appointment.appointmentType === AppointmentType.STREAM) {
+        // Release old token
+        if (appointment.streamBookingId) {
+          const oldBooking = await em.findOne(StreamBooking, { where: { id: appointment.streamBookingId } });
+          if (oldBooking) {
+            const oldSession = await em.findOne(StreamSchedule, { where: { id: oldBooking.streamId } });
+            if (oldSession) {
+              await em.update(StreamSchedule, oldSession.id, {
+                currentCount: Math.max(0, oldSession.currentCount - 1),
+              });
+            }
+            await em.remove(StreamBooking, oldBooking);
+          }
+        }
+
+        // Find and claim new session
+        const newSession = await em.findOne(StreamSchedule, {
+          where: { doctorId: appointment.doctorId, date: newDate, startTime: newStartTime, endTime: newEndTime },
+        });
+        if (!newSession) {
+          const suggestion = await this.nextAvailableStreamSession(appointment.doctorId, newDate);
+          throw new NotFoundException({
+            message: `No stream session found for ${newStartTime}–${newEndTime} on ${newDate}.`,
+            suggestion,
+          });
+        }
+        if (newSession.currentCount >= newSession.maxPatients) {
+          const suggestion = await this.nextAvailableStreamSession(appointment.doctorId, newDate);
+          throw new ConflictException({
+            message: `Stream session is full (${newSession.maxPatients}/${newSession.maxPatients} tokens issued).`,
+            suggestion,
+          });
+        }
+
+        const newToken = newSession.currentCount + 1;
+        const newBooking = await em.save(StreamBooking,
+          em.create(StreamBooking, { streamId: newSession.id, patientId: patient.id, tokenNumber: newToken, bookedAt: new Date() }),
+        );
+        await em.update(StreamSchedule, newSession.id, { currentCount: newToken });
+
+        await em.update(Appointment, appointmentId, {
+          date: newDate,
+          startTime: newStartTime,
+          endTime: newEndTime,
+          tokenNumber: newToken,
+          streamBookingId: newBooking.id,
+          status: AppointmentStatus.RESCHEDULED,
+          rescheduledAt: new Date(),
+          rescheduleReason: reason ?? null,
+        });
+
+        return {
+          message: 'Appointment rescheduled successfully! Your new token is confirmed.',
+          previousSlot,
+          newSession: { date: newDate, startTime: newStartTime, endTime: newEndTime, tokenNumber: newToken },
+          status: AppointmentStatus.RESCHEDULED,
+        };
+      }
+
+      throw new BadRequestException('Unsupported appointment type for rescheduling.');
+    });
   }
 
   // ─── DOCTOR: VIEW MY APPOINTMENTS ────────────────────────────────────────
