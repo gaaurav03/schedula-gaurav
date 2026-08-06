@@ -451,4 +451,37 @@ export class PatientSchedulingService {
       date: slot.date,
     };
   }
+
+  // ─── UNIFIED: Auto-detect & Book ─────────────────────────────────────────
+
+  /**
+   * POST /patient/schedule/book
+   * Single unified booking endpoint. Patient provides one targetId and the
+   * system automatically figures out if it is a WaveSlot or a StreamSchedule.
+   *
+   * Detection order:
+   *  1. Check WaveSlot table  → if found, book as WAVE
+   *  2. Check StreamSchedule  → if found, book as STREAM
+   *  3. Neither found         → 404 Not Found
+   */
+  async bookUnified(userId: string, targetId: string) {
+    // ── Try WAVE first ──────────────────────────────────────────────────────
+    const waveSlot = await this.waveSlotRepo.findOne({ where: { id: targetId } });
+    if (waveSlot) {
+      return this.bookWaveSlot(userId, targetId);
+    }
+
+    // ── Try STREAM ──────────────────────────────────────────────────────────
+    const streamSession = await this.streamScheduleRepo.findOne({ where: { id: targetId } });
+    if (streamSession) {
+      return this.bookStream(userId, targetId);
+    }
+
+    // ── Neither found ────────────────────────────────────────────────────────
+    throw new NotFoundException(
+      `No wave slot or stream session found with id "${targetId}". ` +
+      'Use GET /patient/schedule/available to get valid IDs.',
+    );
+  }
 }
+
