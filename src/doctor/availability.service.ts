@@ -698,16 +698,112 @@ export class AvailabilityService {
 
   // ─── Custom Date Override ─────────────────────────────────────────────────
 
+  /**
+   * POST /doctor/availability/override
+   *
+   * Creates or expands a custom date override slot.
+   * If a custom override already exists for this doctor + date:
+   *  - Automatically EXPANDS/UPDATES the existing custom override
+   *  - Generates new WaveSlots for the expanded window if a WaveSchedule exists for that date
+   *  - Updates StreamSchedule window + maxPatients if a StreamSchedule exists for that date
+   * If no custom override exists for this date:
+   *  - Creates a new CustomAvailability record.
+   */
   async createOverride(
     userId: string,
     dto: CreateCustomAvailabilityDto,
-  ): Promise<CustomAvailability> {
+  ): Promise<any> {
     const {
       date, startTime, endTime,
       isAvailable = true, schedulingMode, maxPatients, slotDurationMins, bufferTimeMins,
     } = dto;
     const profile = await this.getDoctorProfile(userId);
     this.validateTimeRange(startTime, endTime);
+
+    // Check if an existing custom override already exists for this date
+    const existingCustomSlots = await this.customRepo.find({
+      where: { doctorId: profile.id, date },
+    });
+
+    if (existingCustomSlots.length > 0) {
+      // Upsert / Expand the primary custom override for this date
+      const existing = existingCustomSlots[0];
+      const oldStart = existing.startTime;
+      const oldEnd = existing.endTime;
+
+      const updatedStart = startTime;
+      const updatedEnd = endTime;
+
+      // Update the custom availability record
+      existing.startTime = updatedStart;
+      existing.endTime = updatedEnd;
+      existing.isAvailable = isAvailable;
+      if (schedulingMode) existing.schedulingMode = schedulingMode;
+      if (maxPatients !== undefined) existing.maxPatients = maxPatients ?? null;
+      if (slotDurationMins !== undefined) existing.slotDurationMins = slotDurationMins ?? null;
+      if (bufferTimeMins !== undefined) existing.bufferTimeMins = bufferTimeMins ?? 0;
+
+      await this.customRepo.save(existing);
+
+      let newSlotsCount = 0;
+      const mode = existing.schedulingMode;
+
+      // If a WaveSchedule already exists for this date, expand its slots
+      if (mode === SchedulingMode.WAVE) {
+        const waveSchedule = await this.waveScheduleRepo.findOne({
+          where: { doctorId: profile.id, date },
+        });
+
+        if (waveSchedule) {
+          const duration = slotDurationMins ?? waveSchedule.slotDurationMins ?? 15;
+          const buffer = bufferTimeMins ?? waveSchedule.bufferTimeMins ?? 0;
+
+          const newSlotsLeft: Partial<WaveSlot>[] = [];
+          const newSlotsRight: Partial<WaveSlot>[] = [];
+
+          if (toMinutes(updatedStart) < toMinutes(oldStart)) {
+            newSlotsLeft.push(...buildWaveSlots(waveSchedule.id, profile.id, date, updatedStart, oldStart, duration, buffer));
+          }
+          if (toMinutes(updatedEnd) > toMinutes(oldEnd)) {
+            newSlotsRight.push(...buildWaveSlots(waveSchedule.id, profile.id, date, oldEnd, updatedEnd, duration, buffer));
+          }
+
+          const newSlots = [...newSlotsLeft, ...newSlotsRight];
+          if (newSlots.length > 0) {
+            await this.waveSlotRepo.save(newSlots);
+            newSlotsCount = newSlots.length;
+          }
+
+          waveSchedule.startTime = updatedStart;
+          waveSchedule.endTime = updatedEnd;
+          await this.waveScheduleRepo.save(waveSchedule);
+        }
+      } else if (mode === SchedulingMode.STREAM) {
+        const streamSchedule = await this.streamScheduleRepo.findOne({
+          where: { doctorId: profile.id, date },
+        });
+        if (streamSchedule) {
+          streamSchedule.startTime = updatedStart;
+          streamSchedule.endTime = updatedEnd;
+          if (maxPatients && maxPatients > streamSchedule.maxPatients) {
+            streamSchedule.maxPatients = maxPatients;
+          }
+          await this.streamScheduleRepo.save(streamSchedule);
+        }
+      }
+
+      return {
+        message: `Custom date override for ${date} updated/expanded successfully!`,
+        action: 'CUSTOM_EXPANDED',
+        date,
+        oldWindow: `${oldStart} - ${oldEnd}`,
+        newWindow: `${updatedStart} - ${updatedEnd}`,
+        newSlotsGenerated: newSlotsCount,
+        override: existing,
+      };
+    }
+
+    // No existing override for this date -> standard creation
     await this.checkCustomOverlap(profile.id, date, startTime, endTime);
     const slot = this.customRepo.create({
       doctorId: profile.id, date, startTime, endTime, isAvailable,
@@ -716,8 +812,28 @@ export class AvailabilityService {
       slotDurationMins: slotDurationMins ?? null,
       bufferTimeMins: bufferTimeMins ?? 0,
     });
-    return this.customRepo.save(slot);
+    const saved = await this.customRepo.save(slot);
+    return {
+      message: `Custom date override for ${date} created successfully!`,
+      action: 'CUSTOM_CREATED',
+      override: saved,
+    };
   }
+
+  /**
+   * DELETE /doctor/availability/override/:id
+   * Removes a custom date override.
+   */
+  async deleteOverride(userId: string, overrideId: string): Promise<{ message: string }> {
+    const profile = await this.getDoctorProfile(userId);
+    const slot = await this.customRepo.findOne({ where: { id: overrideId } });
+    if (!slot) throw new NotFoundException(`Custom override ${overrideId} not found.`);
+    if (slot.doctorId !== profile.id)
+      throw new ForbiddenException('You do not own this availability override.');
+    await this.customRepo.remove(slot);
+    return { message: 'Custom date override deleted successfully.' };
+  }
+
 
   async getAvailabilityForDate(
     userId: string,
