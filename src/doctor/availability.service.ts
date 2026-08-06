@@ -476,16 +476,20 @@ export class AvailabilityService {
 
             const { slot: newSlot } = replacementRes;
 
-            // Mark new slot as booked by this patient
-            await em.update(WaveSlot, newSlot.id, {
-              isBooked: true,
-              patientId: displaced.patientId,
-              bookedAt: new Date(),
+            const patientId = displaced.patientId;
+
+            // 1. Release the displaced slot first so (waveId, patientId) is freed
+            await em.update(WaveSlot, displaced.id, {
+              isBooked: false,
+              patientId: null,
+              bookedAt: null,
             });
 
-            // Release the displaced slot
-            await em.update(WaveSlot, displaced.id, {
-              isBooked: false, patientId: null, bookedAt: null,
+            // 2. Claim the new replacement slot
+            await em.update(WaveSlot, newSlot.id, {
+              isBooked: true,
+              patientId,
+              bookedAt: new Date(),
             });
 
             // Update the unified Appointment record
