@@ -35,6 +35,7 @@ import { AppointmentModule } from './appointment/appointment.module';
             logging: false,
             autoLoadEntities: true,
             ssl: { rejectUnauthorized: false }, // Required by Neon
+            extra: { family: 4 },              // Force IPv4 — prevents ETIMEDOUT on Windows
           };
         }
 
@@ -53,6 +54,7 @@ import { AppointmentModule } from './appointment/appointment.module';
           ssl: config.get<string>('DB_SSL', 'false') === 'true'
             ? { rejectUnauthorized: false }
             : false,
+          extra: { family: 4 },              // Force IPv4 — prevents ETIMEDOUT on Windows
         };
       },
     }),

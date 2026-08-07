@@ -38,7 +38,7 @@ export class AppointmentController {
    * - Future date/time enforced
    * - Duplicate booking prevented
    * - Session capacity enforced for STREAM
-   * ✅ PATIENT only
+   * - ✅ PATIENT only
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -85,7 +85,7 @@ export class AppointmentController {
    *
    * Reschedule an active appointment to a new date and time.
    * - Only the appointment owner can reschedule
-   * - Cannot reschedule a cancelled or already-rescheduled appointment
+   * - Cannot reschedule a cancelled appointment
    * - 30-minute cutoff enforced on the old appointment
    * - New slot must be in the future and different from the current slot
    * - Old slot is atomically released and new slot atomically reserved
@@ -101,6 +101,7 @@ export class AppointmentController {
     return this.appointmentService.rescheduleAppointment(user.id, id, dto);
   }
 }
+
 
 // ─── Doctor Routes: /doctor/appointments ─────────────────────────────────────
 

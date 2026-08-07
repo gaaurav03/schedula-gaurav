@@ -61,6 +61,14 @@ export class StreamSchedule {
   @Column({ type: 'enum', enum: SchedulingType })
   schedulingType: SchedulingType;
 
+  /**
+   * FK back to the RecurringAvailability template that generated this session.
+   * Null for CUSTOM or manually-created stream schedules.
+   * Used by Elastic Scheduling to find all sessions tied to a template.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  recurringAvailabilityId: string | null;
+
   @OneToMany(() => StreamBooking, (booking) => booking.stream, { cascade: true })
   bookings: StreamBooking[];
 

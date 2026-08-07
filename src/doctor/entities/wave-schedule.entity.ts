@@ -57,6 +57,14 @@ export class WaveSchedule {
   @Column({ type: 'enum', enum: SchedulingType })
   schedulingType: SchedulingType;
 
+  /**
+   * FK back to the RecurringAvailability template that generated this session.
+   * Null for CUSTOM or manually-created wave schedules.
+   * Used by Elastic Scheduling to find all sessions tied to a template.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  recurringAvailabilityId: string | null;
+
   @OneToMany(() => WaveSlot, (slot) => slot.wave, { cascade: true })
   slots: WaveSlot[];
 

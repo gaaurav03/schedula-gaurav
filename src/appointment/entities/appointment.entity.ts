@@ -104,7 +104,7 @@ export class Appointment {
   @Column({ type: 'timestamp', nullable: true })
   rescheduledAt: Date | null;
 
-  /** Optional patient-provided or system reason for the reschedule */
+  /** Patient-provided or system-generated reason for the reschedule (audit trail) */
   @Column({ type: 'varchar', length: 500, nullable: true })
   rescheduleReason: string | null;
 

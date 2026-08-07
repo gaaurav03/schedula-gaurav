@@ -113,8 +113,8 @@ export class AppointmentService {
       schedulingType: appt.schedulingType,
       tokenNumber: appt.tokenNumber,
       cancelledAt: appt.cancelledAt,
-      rescheduledAt: appt.rescheduledAt,
-      rescheduleReason: appt.rescheduleReason,
+      rescheduledAt: appt.rescheduledAt ?? null,
+      rescheduleReason: appt.rescheduleReason ?? null,
       createdAt: appt.createdAt,
       ...(doctor && {
         doctor: {
@@ -247,7 +247,12 @@ export class AppointmentService {
 
     const tokenNumber = streamSession.currentCount + 1;
     const streamBooking = await this.streamBookingRepo.save(
-      this.streamBookingRepo.create({ streamId: streamSession.id, patientId: patient.id, tokenNumber, bookedAt: new Date() }),
+      this.streamBookingRepo.create({
+        streamId: streamSession.id,
+        patientId: patient.id,
+        tokenNumber,
+        bookedAt: new Date(),
+      }),
     );
 
     streamSession.currentCount += 1;
@@ -255,17 +260,22 @@ export class AppointmentService {
 
     const appointment = await this.appointmentRepo.save(
       this.appointmentRepo.create({
-        doctorId, patientId: patient.id, date, startTime, endTime,
+        doctorId,
+        patientId: patient.id,
+        date, startTime, endTime,
         status: AppointmentStatus.BOOKED,
         appointmentType: AppointmentType.STREAM,
         schedulingType: streamSession.schedulingType,
-        tokenNumber, streamBookingId: streamBooking.id,
-        waveSlotId: null, cancelledAt: null, rescheduledAt: null, rescheduleReason: null,
+        tokenNumber,
+        streamBookingId: streamBooking.id,
+        waveSlotId: null,
+        cancelledAt: null, rescheduledAt: null, rescheduleReason: null,
       }),
     );
 
     return {
-      message: `Appointment booked! You are Token #${tokenNumber}. Please arrive within the session window.`,
+      message: 'Appointment booked successfully! Please arrive within the session time window.',
+      tokensRemaining: `${streamSession.maxPatients - streamSession.currentCount}/${streamSession.maxPatients} remaining`,
       ...this.formatAppointment(appointment, doctor, patient),
     };
   }
@@ -274,7 +284,6 @@ export class AppointmentService {
 
   /**
    * PATCH /appointment/:id/reschedule
-   *
    * Atomically releases the old slot and reserves the new one.
    * Supports same-slot-type rescheduling (WAVE→WAVE, STREAM→STREAM).
    * Returns a "next available" suggestion when the target slot/session is unavailable.
@@ -286,7 +295,6 @@ export class AppointmentService {
   ) {
     const { newDate, newStartTime, newEndTime, reason } = dto;
 
-    // ── Load & validate existing appointment ──────────────────────────────
     const appointment = await this.appointmentRepo.findOne({ where: { id: appointmentId } });
     if (!appointment) throw new NotFoundException(`Appointment "${appointmentId}" not found.`);
 
@@ -300,12 +308,6 @@ export class AppointmentService {
       throw new BadRequestException('Cannot reschedule a cancelled appointment.');
     }
 
-    if (appointment.status === AppointmentStatus.RESCHEDULED) {
-      throw new BadRequestException(
-        'This appointment has already been rescheduled. Please manage the updated appointment.',
-      );
-    }
-
     // 30-min cutoff on OLD appointment
     this.assertCutoff(appointment.date, appointment.startTime, 'reschedule');
 
@@ -316,7 +318,7 @@ export class AppointmentService {
       appointment.endTime === newEndTime
     ) {
       throw new BadRequestException(
-        'The new slot is the same as the current slot. Please choose a different time.',
+        'The new slot is the same as the current appointment. Please choose a different time.',
       );
     }
 
@@ -356,7 +358,6 @@ export class AppointmentService {
 
       // ── Atomic: release old slot + reserve new slot ─────────────────────
       await this.dataSource.transaction(async (manager) => {
-        // Release old slot
         if (appointment.waveSlotId) {
           await manager.update(WaveSlot, appointment.waveSlotId, {
             isBooked: false,
@@ -365,14 +366,12 @@ export class AppointmentService {
           });
         }
 
-        // Reserve new slot
         await manager.update(WaveSlot, newSlot.id, {
           isBooked: true,
           patientId: patient.id,
           bookedAt: new Date(),
         });
 
-        // Update appointment record
         await manager.update(Appointment, appointment.id, {
           date: newDate,
           startTime: newStartTime,
@@ -419,11 +418,9 @@ export class AppointmentService {
         });
       }
 
-      // ── Atomic: release old token + issue new token ─────────────────────
       let newTokenNumber: number;
 
       await this.dataSource.transaction(async (manager) => {
-        // Release old stream booking
         if (appointment.streamBookingId) {
           const oldBooking = await manager.findOne(StreamBooking, {
             where: { id: appointment.streamBookingId },
@@ -441,7 +438,6 @@ export class AppointmentService {
           }
         }
 
-        // Issue new token
         newTokenNumber = newSession.currentCount + 1;
         const newBooking = manager.create(StreamBooking, {
           streamId: newSession.id,
@@ -455,7 +451,6 @@ export class AppointmentService {
           currentCount: newSession.currentCount + 1,
         });
 
-        // Update appointment record
         await manager.update(Appointment, appointment.id, {
           date: newDate,
           startTime: newStartTime,
