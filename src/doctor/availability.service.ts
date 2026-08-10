@@ -19,6 +19,8 @@ import { PatientProfile } from '../patient/entities/patient-profile.entity';
 import { CreateRecurringAvailabilityDto } from './dto/create-recurring-availability.dto';
 import { UpdateRecurringAvailabilityDto } from './dto/update-recurring-availability.dto';
 import { CreateCustomAvailabilityDto } from './dto/create-custom-availability.dto';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/entities/notification.entity';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -120,6 +122,7 @@ export class AvailabilityService {
     private readonly patientProfileRepo: Repository<PatientProfile>,
 
     private readonly dataSource: DataSource,
+    private readonly notificationService: NotificationService,
   ) {}
 
   // ─── Core Helpers ──────────────────────────────────────────────────────────
@@ -493,6 +496,10 @@ export class AvailabilityService {
             });
 
             // Update the unified Appointment record
+            const apptResult = await em.findOne(
+              Appointment,
+              { where: { waveSlotId: displaced.id, status: AppointmentStatus.BOOKED } },
+            );
             await em.update(
               Appointment,
               { waveSlotId: displaced.id, status: AppointmentStatus.BOOKED },
@@ -505,6 +512,17 @@ export class AvailabilityService {
                 rescheduleReason: 'Auto-reassigned due to doctor availability shrink',
               },
             );
+
+            // Non-blocking auto-reassignment notification
+            if (patientId && apptResult) {
+              void this.notificationService.createNotification({
+                patientId,
+                appointmentId: apptResult.id,
+                type: NotificationType.APPOINTMENT_AUTO_REASSIGNED,
+                title: 'Appointment Time Changed',
+                message: `Your appointment has been moved from ${displaced.date} at ${displaced.slotStart} to ${newSlot.date} at ${newSlot.slotStart} due to a schedule update by your doctor.`,
+              });
+            }
           }
 
           // 2. Delete unbooked slots that fall outside the new window
@@ -515,7 +533,7 @@ export class AvailabilityService {
             const toDelete = unbookedOutside.filter(
               (s) => toMinutes(s.slotStart) < newStartMins || toMinutes(s.slotEnd) > newEndMins,
             );
-            if (toDelete.length > 0) await em.remove(WaveSlot, toDelete);
+            if (toDelete.length > 0) await em.remove(toDelete);
 
             // 3. Update wave schedule window
             await em.update(WaveSchedule, ws.id, { startTime: newStart, endTime: newEnd });
@@ -652,6 +670,9 @@ export class AvailabilityService {
               await em.update(StreamSchedule, ss.id, { currentCount: ss.currentCount - 1 });
 
               // Update unified appointment record
+              const streamAppt = await em.findOne(Appointment, {
+                where: { streamBookingId: booking.id, status: AppointmentStatus.BOOKED },
+              });
               await em.update(
                 Appointment,
                 { streamBookingId: booking.id, status: AppointmentStatus.BOOKED },
@@ -664,6 +685,17 @@ export class AvailabilityService {
                   rescheduleReason: 'Auto-reassigned due to stream capacity shrink',
                 },
               );
+
+              // Non-blocking auto-reassignment notification
+              if (streamAppt && booking.patientId) {
+                void this.notificationService.createNotification({
+                  patientId: booking.patientId,
+                  appointmentId: streamAppt.id,
+                  type: NotificationType.APPOINTMENT_AUTO_REASSIGNED,
+                  title: 'Appointment Time Changed',
+                  message: `Your appointment has been moved from ${ss.date} at ${ss.startTime} to ${replacement.session.date} at ${replacement.session.startTime} due to a schedule update by your doctor.`,
+                });
+              }
             }
           }
 

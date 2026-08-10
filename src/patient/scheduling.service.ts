@@ -14,6 +14,9 @@ import { RecurringAvailability, DayOfWeek, SchedulingMode } from '../doctor/enti
 import { CustomAvailability } from '../doctor/entities/custom-availability.entity';
 import { PatientProfile } from './entities/patient-profile.entity';
 import { Appointment, AppointmentStatus, AppointmentType } from '../appointment/entities/appointment.entity';
+import { DoctorProfile } from '../doctor/entities/doctor-profile.entity';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/entities/notification.entity';
 
 /** Convert "HH:mm" to total minutes from midnight */
 function toMinutes(time: string): number {
@@ -96,6 +99,11 @@ export class PatientSchedulingService {
 
     @InjectRepository(Appointment)
     private readonly appointmentRepo: Repository<Appointment>,
+
+    @InjectRepository(DoctorProfile)
+    private readonly doctorProfileRepo: Repository<DoctorProfile>,
+
+    private readonly notificationService: NotificationService,
   ) {}
 
   // ─── Helper ──────────────────────────────────────────────────────────────
@@ -361,7 +369,7 @@ export class PatientSchedulingService {
     await this.streamScheduleRepo.save(stream);
 
     // Create unified appointment record so it appears in GET /appointment/my
-    await this.appointmentRepo.save(
+    const appointment = await this.appointmentRepo.save(
       this.appointmentRepo.create({
         doctorId: stream.doctorId,
         patientId: patient.id,
@@ -377,6 +385,17 @@ export class PatientSchedulingService {
         cancelledAt: null,
       }),
     );
+
+    const doctor = await this.doctorProfileRepo.findOne({ where: { id: stream.doctorId } });
+
+    // Non-blocking notification
+    void this.notificationService.createNotification({
+      patientId: patient.id,
+      appointmentId: appointment.id,
+      type: NotificationType.APPOINTMENT_BOOKED,
+      title: 'Appointment Booked',
+      message: `Your appointment with Dr. ${doctor?.fullName ?? 'your doctor'} has been booked successfully for ${stream.date} at ${stream.startTime}.`,
+    });
 
     return {
       message: 'Stream booking confirmed! Please arrive within the time window.',
@@ -428,7 +447,7 @@ export class PatientSchedulingService {
     await this.waveSlotRepo.save(slot);
 
     // Create unified appointment record so it appears in GET /appointment/my
-    await this.appointmentRepo.save(
+    const appointment = await this.appointmentRepo.save(
       this.appointmentRepo.create({
         doctorId: slot.doctorId,
         patientId: patient.id,
@@ -444,6 +463,17 @@ export class PatientSchedulingService {
         cancelledAt: null,
       }),
     );
+
+    const doctor = await this.doctorProfileRepo.findOne({ where: { id: slot.doctorId } });
+
+    // Non-blocking notification
+    void this.notificationService.createNotification({
+      patientId: patient.id,
+      appointmentId: appointment.id,
+      type: NotificationType.APPOINTMENT_BOOKED,
+      title: 'Appointment Booked',
+      message: `Your appointment with Dr. ${doctor?.fullName ?? 'your doctor'} has been booked successfully for ${slot.date} at ${slot.slotStart}.`,
+    });
 
     return {
       message: 'Appointment confirmed! You have an exact appointment time.',

@@ -12,7 +12,9 @@ import { WaveSlot } from '../doctor/entities/wave-booking.entity';
 import { RecurringAvailability } from '../doctor/entities/recurring-availability.entity';
 import { CustomAvailability } from '../doctor/entities/custom-availability.entity';
 import { Appointment } from '../appointment/entities/appointment.entity';
+import { DoctorProfile } from '../doctor/entities/doctor-profile.entity';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -25,8 +27,10 @@ import { AuthModule } from '../auth/auth.module';
       RecurringAvailability,
       CustomAvailability,
       Appointment,
+      DoctorProfile,
     ]),
     AuthModule,
+    NotificationModule,
   ],
   controllers: [PatientController, PatientSchedulingController],
   providers: [PatientService, PatientSchedulingService],

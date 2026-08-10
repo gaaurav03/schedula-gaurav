@@ -16,6 +16,7 @@ import { SchedulingService } from './scheduling.service';
 import { AuthModule } from '../auth/auth.module';
 import { Appointment } from '../appointment/entities/appointment.entity';
 import { PatientProfile } from '../patient/entities/patient-profile.entity';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { PatientProfile } from '../patient/entities/patient-profile.entity';
       PatientProfile,    // needed for patient name in conflict responses
     ]),
     AuthModule,
+    NotificationModule,
   ],
   controllers: [DoctorController, AvailabilityController, SchedulingController],
   providers: [DoctorService, AvailabilityService, SchedulingService],
