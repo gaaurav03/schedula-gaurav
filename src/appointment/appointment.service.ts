@@ -16,6 +16,8 @@ import { WaveSchedule } from '../doctor/entities/wave-schedule.entity';
 import { WaveSlot } from '../doctor/entities/wave-booking.entity';
 import { DoctorProfile } from '../doctor/entities/doctor-profile.entity';
 import { PatientProfile } from '../patient/entities/patient-profile.entity';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/entities/notification.entity';
 
 @Injectable()
 export class AppointmentService {
@@ -42,6 +44,7 @@ export class AppointmentService {
     private readonly patientProfileRepo: Repository<PatientProfile>,
 
     private readonly dataSource: DataSource,
+    private readonly notificationService: NotificationService,
   ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -222,6 +225,16 @@ export class AppointmentService {
           cancelledAt: null, rescheduledAt: null, rescheduleReason: null,
         }),
       );
+
+      // Non-blocking notification
+      void this.notificationService.createNotification({
+        patientId: patient.id,
+        appointmentId: appointment.id,
+        type: NotificationType.APPOINTMENT_BOOKED,
+        title: 'Appointment Booked',
+        message: `Your appointment with Dr. ${doctor.fullName} has been booked successfully for ${date} at ${startTime}.`,
+      });
+
       return { message: 'Appointment booked successfully! You have an exact appointment time.', ...this.formatAppointment(appointment, doctor, patient) };
     }
 
@@ -272,6 +285,15 @@ export class AppointmentService {
         cancelledAt: null, rescheduledAt: null, rescheduleReason: null,
       }),
     );
+
+    // Non-blocking notification
+    void this.notificationService.createNotification({
+      patientId: patient.id,
+      appointmentId: appointment.id,
+      type: NotificationType.APPOINTMENT_BOOKED,
+      title: 'Appointment Booked',
+      message: `Your appointment with Dr. ${doctor.fullName} has been booked successfully for ${date} at ${startTime}.`,
+    });
 
     return {
       message: 'Appointment booked successfully! Please arrive within the session time window.',
@@ -384,6 +406,16 @@ export class AppointmentService {
       });
 
       const updated = await this.appointmentRepo.findOne({ where: { id: appointment.id } });
+
+      // Non-blocking notification
+      void this.notificationService.createNotification({
+        patientId: patient.id,
+        appointmentId: appointment.id,
+        type: NotificationType.APPOINTMENT_RESCHEDULED,
+        title: 'Appointment Rescheduled',
+        message: `Your appointment with Dr. ${doctor.fullName} has been rescheduled to ${newDate} at ${newStartTime}.`,
+      });
+
       return {
         message: 'Appointment rescheduled successfully! Your new slot is confirmed.',
         previousSlot: { date: appointment.date, startTime: appointment.startTime, endTime: appointment.endTime },
@@ -464,6 +496,16 @@ export class AppointmentService {
       });
 
       const updated = await this.appointmentRepo.findOne({ where: { id: appointment.id } });
+
+      // Non-blocking notification
+      void this.notificationService.createNotification({
+        patientId: patient.id,
+        appointmentId: appointment.id,
+        type: NotificationType.APPOINTMENT_RESCHEDULED,
+        title: 'Appointment Rescheduled',
+        message: `Your appointment with Dr. ${doctor.fullName} has been rescheduled to ${newDate} at ${newStartTime}.`,
+      });
+
       return {
         message: `Appointment rescheduled! Your new token is #${newTokenNumber!}. Please arrive within the new session window.`,
         previousSession: { date: appointment.date, startTime: appointment.startTime, endTime: appointment.endTime },
@@ -539,6 +581,17 @@ export class AppointmentService {
     appointment.status = AppointmentStatus.CANCELLED;
     appointment.cancelledAt = new Date();
     await this.appointmentRepo.save(appointment);
+
+    const doctorForNotif = await this.doctorProfileRepo.findOne({ where: { id: appointment.doctorId } });
+
+    // Non-blocking notification
+    void this.notificationService.createNotification({
+      patientId: patient.id,
+      appointmentId: appointment.id,
+      type: NotificationType.APPOINTMENT_CANCELLED,
+      title: 'Appointment Cancelled',
+      message: `Your appointment with Dr. ${doctorForNotif?.fullName ?? 'your doctor'} scheduled on ${appointment.date} at ${appointment.startTime} has been cancelled.`,
+    });
 
     return {
       message: 'Appointment cancelled successfully. The slot is now available for others.',

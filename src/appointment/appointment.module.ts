@@ -10,6 +10,7 @@ import { WaveSlot } from '../doctor/entities/wave-booking.entity';
 import { DoctorProfile } from '../doctor/entities/doctor-profile.entity';
 import { PatientProfile } from '../patient/entities/patient-profile.entity';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AuthModule } from '../auth/auth.module';
       PatientProfile,
     ]),
     AuthModule,
+    NotificationModule,
   ],
   controllers: [AppointmentController, DoctorAppointmentController],
   providers: [AppointmentService],
