@@ -131,4 +131,23 @@ export class NotificationService {
       updatedCount: result.affected ?? 0,
     };
   }
+
+  /**
+   * DELETE /notification/:id
+   * Deletes a single notification owned by the logged-in patient.
+   */
+  async deleteNotification(notificationId: string, userId: string): Promise<{ message: string }> {
+    const patientId = await this.resolvePatientId(userId);
+
+    const notification = await this.notificationRepo.findOne({
+      where: { id: notificationId, patientId },
+    });
+
+    if (!notification) {
+      throw new NotFoundException(`Notification with ID "${notificationId}" not found.`);
+    }
+
+    await this.notificationRepo.remove(notification);
+    return { message: 'Notification deleted successfully.' };
+  }
 }

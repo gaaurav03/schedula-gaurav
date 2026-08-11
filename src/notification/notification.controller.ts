@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Patch,
+  Delete,
   Param,
   Query,
   HttpCode,
@@ -62,5 +63,19 @@ export class NotificationController {
     @Param('id', ParseUUIDPipe) notificationId: string,
   ) {
     return this.notificationService.markAsRead(notificationId, user.id);
+  }
+
+  /**
+   * DELETE /notification/:id
+   *
+   * Deletes a single notification for the logged-in patient.
+   */
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  async deleteNotification(
+    @GetUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) notificationId: string,
+  ) {
+    return this.notificationService.deleteNotification(notificationId, user.id);
   }
 }
