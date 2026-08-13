@@ -15,8 +15,14 @@ export enum NotificationType {
   APPOINTMENT_CANCELLED = 'APPOINTMENT_CANCELLED',
   APPOINTMENT_RESCHEDULED = 'APPOINTMENT_RESCHEDULED',
   APPOINTMENT_AUTO_REASSIGNED = 'APPOINTMENT_AUTO_REASSIGNED',
+  APPOINTMENT_REMINDER = 'APPOINTMENT_REMINDER',
 }
 
+/**
+ * Unique composite index: prevents more than one notification of the same
+ * type being created for the same appointment (e.g. duplicate reminders).
+ */
+@Index('UQ_notification_appt_type', ['appointmentId', 'type'], { unique: true })
 @Index('IDX_notifications_patientId', ['patientId'])
 @Entity('notifications')
 export class Notification {

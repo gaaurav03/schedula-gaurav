@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Delete,
   Param,
@@ -16,12 +17,37 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Role } from '../users/user.entity';
 import { NotificationService } from './notification.service';
+import { ReminderService } from './reminder.service';
 
 @Controller('notification')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.PATIENT)
 export class NotificationController {
-  constructor(private readonly notificationService: NotificationService) {}
+  constructor(
+    private readonly notificationService: NotificationService,
+    private readonly reminderService: ReminderService,
+  ) {}
+
+  // ─── DOCTOR-only Routes ───────────────────────────────────────────────────
+
+  /**
+   * POST /notification/trigger-reminders
+   *
+   * Manually triggers the appointment reminder cron logic.
+   * Useful for testing without waiting for the scheduled cron to fire.
+   *
+   * Scans all BOOKED appointments within the next 24 hours and sends
+   * reminder notifications to patients who haven't received one yet.
+   *
+   * ✅ DOCTOR only
+   */
+  @Post('trigger-reminders')
+  @Roles(Role.DOCTOR)
+  @HttpCode(HttpStatus.OK)
+  async triggerReminders() {
+    return this.reminderService.sendReminders();
+  }
+
+  // ─── PATIENT-only Routes ──────────────────────────────────────────────────
 
   /**
    * GET /notification/my
@@ -33,6 +59,7 @@ export class NotificationController {
    *   ?filter=unread  → Return only unread notifications
    */
   @Get('my')
+  @Roles(Role.PATIENT)
   async getMyNotifications(
     @GetUser() user: { id: string },
     @Query('filter') filter?: string,
@@ -46,6 +73,7 @@ export class NotificationController {
    * Marks all notifications for the logged-in patient as read.
    */
   @Patch('read-all')
+  @Roles(Role.PATIENT)
   @HttpCode(HttpStatus.OK)
   async markAllAsRead(@GetUser() user: { id: string }) {
     return this.notificationService.markAllAsRead(user.id);
@@ -57,6 +85,7 @@ export class NotificationController {
    * Marks a single notification as read.
    */
   @Patch(':id/read')
+  @Roles(Role.PATIENT)
   @HttpCode(HttpStatus.OK)
   async markAsRead(
     @GetUser() user: { id: string },
@@ -71,6 +100,7 @@ export class NotificationController {
    * Deletes a single notification for the logged-in patient.
    */
   @Delete(':id')
+  @Roles(Role.PATIENT)
   @HttpCode(HttpStatus.OK)
   async deleteNotification(
     @GetUser() user: { id: string },
