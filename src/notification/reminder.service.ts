@@ -198,6 +198,18 @@ export class ReminderService {
   // ─── Message Builder ─────────────────────────────────────────────────────
 
   /**
+   * Normalises a doctor's stored full name to always appear as "Dr. <Name>".
+   * Prevents double-prefix ("Dr. Dr. Ross") when fullName already contains "Dr.".
+   */
+  private formatDoctorName(fullName: string): string {
+    const trimmed = fullName.trim();
+    if (/^Dr\.?\s/i.test(trimmed)) {
+      return trimmed; // already has prefix
+    }
+    return `Dr. ${trimmed}`;
+  }
+
+  /**
    * Builds the reminder title and message based on the appointment scheduling type.
    *
    * STREAM appointments:
@@ -217,7 +229,7 @@ export class ReminderService {
     if (appt.appointmentType === AppointmentType.STREAM) {
       // STREAM: token-based, patient has a reporting time + token number
       const message =
-        `Reminder: You have an appointment with Dr. ${doctor.fullName} on ${appt.date}.\n` +
+        `Reminder: You have an appointment with ${this.formatDoctorName(doctor.fullName)} on ${appt.date}.\n` +
         `Reporting Time: ${this.formatTime(appt.startTime)}\n` +
         `Token Number: ${appt.tokenNumber ?? 'N/A'}`;
       return { title, message };
@@ -225,7 +237,7 @@ export class ReminderService {
 
     // WAVE: exact slot, patient has a fixed start–end window
     const message =
-      `Reminder: You have an appointment with Dr. ${doctor.fullName} on ${appt.date}.\n` +
+      `Reminder: You have an appointment with ${this.formatDoctorName(doctor.fullName)} on ${appt.date}.\n` +
       `Appointment Time: ${this.formatTime(appt.startTime)} - ${this.formatTime(appt.endTime)}`;
     return { title, message };
   }

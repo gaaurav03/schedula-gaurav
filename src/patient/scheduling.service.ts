@@ -118,6 +118,19 @@ export class PatientSchedulingService {
     return profile;
   }
 
+  /**
+   * Normalises a doctor's stored full name to always appear as "Dr. <Name>".
+   * Prevents double-prefix ("Dr. Dr. Ross") when fullName already contains "Dr.".
+   */
+  private formatDoctorName(fullName: string | undefined | null): string {
+    if (!fullName) return 'your doctor';
+    const trimmed = fullName.trim();
+    if (/^Dr\.?\s/i.test(trimmed)) {
+      return trimmed; // already has prefix
+    }
+    return `Dr. ${trimmed}`;
+  }
+
   // ─── Unified Available Schedule ────────────────────────────────────────────
 
   /**
@@ -394,7 +407,7 @@ export class PatientSchedulingService {
       appointmentId: appointment.id,
       type: NotificationType.APPOINTMENT_BOOKED,
       title: 'Appointment Booked',
-      message: `Your appointment with Dr. ${doctor?.fullName ?? 'your doctor'} has been booked successfully for ${stream.date} at ${stream.startTime}.`,
+      message: `Your appointment with ${this.formatDoctorName(doctor?.fullName)} has been booked successfully for ${stream.date} at ${stream.startTime}.`,
     });
 
     return {
@@ -472,7 +485,7 @@ export class PatientSchedulingService {
       appointmentId: appointment.id,
       type: NotificationType.APPOINTMENT_BOOKED,
       title: 'Appointment Booked',
-      message: `Your appointment with Dr. ${doctor?.fullName ?? 'your doctor'} has been booked successfully for ${slot.date} at ${slot.slotStart}.`,
+      message: `Your appointment with ${this.formatDoctorName(doctor?.fullName)} has been booked successfully for ${slot.date} at ${slot.slotStart}.`,
     });
 
     return {
