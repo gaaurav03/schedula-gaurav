@@ -71,15 +71,34 @@ export class ReminderService {
 
     // ── 1. Fetch BOOKED appointments within the reminder window ──────────────
     //
-    // We join via a LEFT JOIN subquery on notifications to filter out appointments
-    // that already have a APPOINTMENT_REMINDER notification. This is more efficient
-    // than fetching all appointments and filtering in JS.
+    // Appointment dates/times are stored as local (IST) strings:
+    //   date:      'YYYY-MM-DD'
+    //   startTime: 'HH:mm'
     //
-    // The date+startTime comparison works with the stored format:
-    //   date:      'YYYY-MM-DD'  (PostgreSQL DATE stored as string)
-    //   startTime: 'HH:mm'      (VARCHAR)
+    // We compare them as plain strings: 'YYYY-MM-DD HH:mm' is lexicographically
+    // sortable, so string comparison gives correct chronological ordering.
     //
-    // We combine them as a TIMESTAMP using TO_TIMESTAMP for reliable comparison.
+    // WHY NOT toISOString():
+    //   toISOString() returns UTC (e.g. 12:54Z for 18:24 IST). TO_TIMESTAMP on the
+    //   stored local string '15:40' has no timezone info, so PostgreSQL treats it as
+    //   the DB session timezone (UTC). This causes '15:40 UTC' to appear > '12:54 UTC
+    //   + 24h window', making the appointment appear outside the window — even though
+    //   it is only 21h away in IST.
+    //
+    // FIX: Format now/windowEnd using LOCAL getters (getHours, getDate, etc.) so the
+    //      boundary strings are in the same timezone as the stored appointment strings.
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const toLocalStr = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+      `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    const nowStr = toLocalStr(now);
+    const windowEndStr = toLocalStr(windowEnd);
+
+    this.logger.log(
+      `[ReminderService] Scanning window: ${nowStr} → ${windowEndStr} (local time)`,
+    );
 
     const appointments = await this.appointmentRepo
       .createQueryBuilder('appt')
@@ -92,12 +111,12 @@ export class ReminderService {
       .where('appt.status = :status', { status: AppointmentStatus.BOOKED })
       .andWhere('notif.id IS NULL') // No reminder sent yet
       .andWhere(
-        `TO_TIMESTAMP(appt.date || ' ' || appt."startTime", 'YYYY-MM-DD HH24:MI') > :now`,
-        { now: now.toISOString() },
+        `(appt.date || ' ' || appt."startTime") > :nowStr`,
+        { nowStr },
       )
       .andWhere(
-        `TO_TIMESTAMP(appt.date || ' ' || appt."startTime", 'YYYY-MM-DD HH24:MI') <= :windowEnd`,
-        { windowEnd: windowEnd.toISOString() },
+        `(appt.date || ' ' || appt."startTime") <= :windowEndStr`,
+        { windowEndStr },
       )
       .getMany();
 
