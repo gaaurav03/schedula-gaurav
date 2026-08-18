@@ -69,6 +69,19 @@ export class AppointmentService {
     return doctor;
   }
 
+  /**
+   * Normalises a doctor's stored full name to always appear as "Dr. <Name>".
+   * Prevents double-prefix ("Dr. Dr. Ross") when fullName already contains "Dr.".
+   */
+  private formatDoctorName(fullName: string | undefined | null): string {
+    if (!fullName) return 'your doctor';
+    const trimmed = fullName.trim();
+    if (/^Dr\.?\s/i.test(trimmed)) {
+      return trimmed; // already has prefix
+    }
+    return `Dr. ${trimmed}`;
+  }
+
   /** Assert that date+startTime is strictly in the future */
   private assertFuture(date: string, startTime: string, label = 'Appointment'): void {
     const [year, month, day] = date.split('-').map(Number);
@@ -232,7 +245,7 @@ export class AppointmentService {
         appointmentId: appointment.id,
         type: NotificationType.APPOINTMENT_BOOKED,
         title: 'Appointment Booked',
-        message: `Your appointment with Dr. ${doctor.fullName} has been booked successfully for ${date} at ${startTime}.`,
+        message: `Your appointment with ${this.formatDoctorName(doctor.fullName)} has been booked successfully for ${date} at ${startTime}.`,
       });
 
       return { message: 'Appointment booked successfully! You have an exact appointment time.', ...this.formatAppointment(appointment, doctor, patient) };
@@ -590,7 +603,7 @@ export class AppointmentService {
       appointmentId: appointment.id,
       type: NotificationType.APPOINTMENT_CANCELLED,
       title: 'Appointment Cancelled',
-      message: `Your appointment with Dr. ${doctorForNotif?.fullName ?? 'your doctor'} scheduled on ${appointment.date} at ${appointment.startTime} has been cancelled.`,
+      message: `Your appointment with ${this.formatDoctorName(doctorForNotif?.fullName)} scheduled on ${appointment.date} at ${appointment.startTime} has been cancelled.`,
     });
 
     return {

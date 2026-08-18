@@ -3,13 +3,18 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 /**
  * Migration: Add RESCHEDULED to appointment status enum and
  * add rescheduledAt + rescheduleReason audit columns to appointments table.
+ *
+ * Fix: The correct enum name is "appointment_status_enum" (not "appointments_status_enum").
+ * PostgreSQL ADD VALUE cannot run inside a transaction, so we COMMIT first.
  */
 export class AddRescheduledStatusAndAuditColumns1754400000001 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Add RESCHEDULED to the appointments_status_enum
+    // PostgreSQL: ADD VALUE cannot run inside a transaction — commit first.
+    await queryRunner.query(`COMMIT`);
     await queryRunner.query(`
-      ALTER TYPE "appointments_status_enum" ADD VALUE IF NOT EXISTS 'RESCHEDULED'
+      ALTER TYPE "appointment_status_enum" ADD VALUE IF NOT EXISTS 'RESCHEDULED'
     `);
+    await queryRunner.query(`BEGIN`);
 
     // Add rescheduledAt column
     await queryRunner.query(`

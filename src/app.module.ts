@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -17,6 +18,9 @@ import { NotificationModule } from './notification/notification.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // Enable NestJS cron job scheduling (required for @Cron decorator)
+    ScheduleModule.forRoot(),
 
     // TypeORM + PostgreSQL connection
     // Supports both DATABASE_URL (Neon / cloud) and individual DB_* vars (local dev)
